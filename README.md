@@ -29,7 +29,7 @@
 | 后端框架 | Robyn | Rust 内核 Python Web 框架,高性能 |
 | OCR 引擎 | PaddleOCR-VL-1.6 | 百度飞桨文档解析模型 |
 | 推理加速 | MLX-VLM (可选) | Apple Silicon GPU 推理后端,VLM 识别提速数倍 |
-| 元数据存储 | SQLite | 内置于 Python 标准库,轻量 OLTP |
+| 元数据存储 | SQLite | 内置于 Python 标准库,轻量 OLTP;启动时自动迁移补齐新增列,升级不影响旧数据 |
 | 实时推送 | SSE | Server-Sent Events,Robyn StreamingResponse |
 | 任务队列 | SQLite 持久化队列 | 单工作线程串行处理,重启自动恢复中断 |
 | PDF 渲染 | PyMuPDF | 高性能 PDF 页面渲染 |

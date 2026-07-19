@@ -71,10 +71,15 @@ MathOCR 是基于 PaddleOCR-VL-1.6 的文档智能解析平台。用户上传 PD
 - Robyn `StreamingResponse` + 生成器 yield 实现
 - 降级: SSE 连接失败时自动回退到 2 秒轮询
 
+### SQLite schema 自动迁移
+- `_init_db` 在建表后调用 `_migrate_columns`: 对照 `_EXPECTED_COLUMNS` 声明式列清单,用 `PRAGMA table_info` 检测缺失列并 `ALTER TABLE ADD COLUMN` 补齐
+- 幂等、仅增补(不改既有数据),解决 `CREATE TABLE IF NOT EXISTS` 不会给老库加新列导致的 `no such column` 崩溃;新增列时只需在 `_EXPECTED_COLUMNS` 中登记
+
 ### SQLite 持久化队列而非 Celery/Redis
 - 单进程场景,无需分布式队列;队列状态存于 batches 表 status 列(queued/processing/completed/error)
 - 单工作线程 FIFO;`threading.Event` 唤醒避免轮询延迟
-- 重启后 `recover_interrupted()` 将 processing 状态批次重新入队;`_process_single_file()` 的 resume guard 跳过已完成页面,零重复 OCR
+- 重启后 `recover_interrupted()` 将 processing 状态批次重新入队;已完成的文件/页面全部跳过(resume guard),仅中断中的当前文件会整篇重跑(VLM 推理无法从中间页续跑),但已持久化页结果保留不丢
+- worker 拾起批次时发布 `batch_started` 全局事件(前端即刻翻转 排队→处理中);`/api/batches` 对 processing 与 queued 均附加 `progress` 快照,刷新页面后立即显示百分比
 
 ### 批次内文件串行而非并行
 - PaddleOCR-VL pipeline 的 `predict_iter` 非线程安全,多 worker 并发调用共享 pipeline 会崩溃(实测多图上传报错)
