@@ -60,7 +60,14 @@
 
 ### Apple Silicon 加速 (MLX-VLM)
 
-在 Apple Silicon (M1/M2/M3/M4) 上,版面分析仍由 PaddlePaddle (CPU) 完成,但耗时最长的 VLM 识别阶段可外包给 MLX-VLM 服务,利用 Apple GPU 大幅提速:
+在 Apple Silicon (M1/M2/M3/M4) 上,版面分析仍由 PaddlePaddle (CPU) 完成,但耗时最长的 VLM 识别阶段可外包给 MLX-VLM 服务,利用 Apple GPU 大幅提速。
+
+实测数据 (Apple M4, 样本为 11 页数学教材 PDF, 含表格与公式):
+
+| 推理后端 | 单页平均耗时 | 11 页总耗时 | 提速 |
+|---|---|---|---|
+| CPU (PaddlePaddle 本地推理) | ~76 秒/页 | ~14 分钟 | 1x |
+| MLX-VLM (Apple GPU) | ~8.3 秒/页 | 91.75 秒 | **~9x** |
 
 - `start.sh` 自动安装 mlx-vlm 与 modelscope,首次从 ModelScope 下载模型到 `~/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6` (HuggingFace 直连在国内易卡死,故走 ModelScope CDN),随后后台启动 MLX-VLM 服务 (端口 8111, 预加载模型)
 - Web 服务初始化 OCR 引擎时自动探测 `http://localhost:8111/`,探测成功即启用 `mlx-vlm-server` 后端,否则回退本地 CPU 推理
@@ -221,7 +228,7 @@ bun run dev  # watch 模式,自动重建 vendor.js
 ## 参考
 
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)
-- [PaddleOCR-VL-Apple-Silicon]https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/pipeline_usage/PaddleOCR-VL-Apple-Silicon.md)
+- [PaddleOCR-VL-Apple-Silicon](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/pipeline_usage/PaddleOCR-VL-Apple-Silicon.md)
 - [MinerU](https://github.com/opendatalab/MinerU) — UI 设计参考
 - [Robyn](https://github.com/sparckles/robyn) — Rust 内核 Python Web 框架
 - [ModelScope](https://modelscope.cn) — 模型下载源

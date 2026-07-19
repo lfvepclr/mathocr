@@ -103,6 +103,7 @@ MathOCR 是基于 PaddleOCR-VL-1.6 的文档智能解析平台。用户上传 PD
 - `start.sh` 首次用 modelscope SDK 从 ModelScope 下载模型 (~2GB, 国内 CDN; HF 直连在国内易卡死),再以 `--model` 预加载方式后台启动 `mlx_vlm.server` (端口 8111),并检测/重启无模型的旧实例
 - 环境变量: `OCR_VL_REC_BACKEND`、`OCR_VL_REC_SERVER_URL`、`OCR_VL_REC_API_MODEL_NAME`、`OCR_VL_REC_MAX_CONCURRENCY` (默认 4)
 - MLX 服务日志: `/tmp/mlx_vlm_server.log`
+- 实测性能 (Apple M4, 11 页数学教材 PDF 含表格公式): CPU ~76s/页 vs MLX-VLM ~8.3s/页 (总耗时 91.75s), 提速 ~9x
 
 ## PaddleOCR-VL JSON 结构
 
@@ -207,7 +208,7 @@ export PADDLE_PDX_LOCAL_MODEL_SOURCE="ModelScope"
 ## 已知限制
 
 1. **串行吞吐**: 批次间、批次内均为串行处理(pipeline 非线程安全),大批次耗时线性增长
-2. **推理速度**: 默认 CPU 推理每页约 1-2 分钟;安装并启动 MLX-VLM 服务后 (start.sh 自动处理),VLM 识别走 Apple GPU 显著提速。MLX 模型 (~2GB) 首次需从 ModelScope 下载,期间回退 CPU
+2. **推理速度**: 默认 CPU 推理每页约 76 秒;安装并启动 MLX-VLM 服务后 (start.sh 自动处理),VLM 识别走 Apple GPU 约 8.3 秒/页 (实测提速 ~9x, Apple M4)。MLX 模型 (~2GB) 首次需从 ModelScope 下载,期间回退 CPU
 3. **Word 公式**: LaTeX 公式转为 Unicode 符号文本(非 OMML 原生公式),复杂排版(矩阵/多层分式)可能损失结构
 4. **SSE 超时**: SSE 连接最长 10 分钟,超时后浏览器自动重连
 5. **文件名编码**: 中文文件名在 URL 中需正确编码,`generate_file_id()` 已处理
