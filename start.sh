@@ -127,6 +127,8 @@ echo -e "${GREEN}  ✓ 模型源: ModelScope${NC}"
 # MLX 模型本地目录 (从 ModelScope 下载, 国内 CDN 速度快; HF 直连易卡死)
 MLX_MODEL_DIR="${HOME}/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6"
 MLX_MODEL=${OCR_VL_REC_API_MODEL_NAME:-$MLX_MODEL_DIR}
+# 客户端与服务端必须使用同一个模型 ID（本地路径），否则服务端会尝试从 HF 重新下载
+export OCR_VL_REC_API_MODEL_NAME="$MLX_MODEL"
 if .venv/bin/python -c "import mlx_vlm" 2>/dev/null; then
     if curl -s -m 2 "http://localhost:${MLX_PORT}/v1/models" | grep -q '"id"'; then
         echo -e "${GREEN}  ✓ MLX-VLM 服务已在 :${MLX_PORT} 运行 (模型已加载)${NC}"
