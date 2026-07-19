@@ -385,6 +385,11 @@ const QueuePanel = {
     const p = this.progress[b.batch_id];
     let text = b.status === 'queued' ? '排队中...' : '准备中...';
     let pct = 0;
+    if (p && b.status === 'queued' && p.doneFiles > 0) {
+      // Interrupted batch awaiting resume: show partial file-level progress
+      pct = Math.min(p.doneFiles / p.totalFiles * 100, 100);
+      text = `排队中 · 已完成 ${p.doneFiles}/${p.totalFiles} 文件`;
+    }
     if (p && b.status === 'processing') {
       const filePct = p.curTotal > 0 ? p.curDone / p.curTotal : 0;
       pct = Math.min((p.doneFiles + filePct) / p.totalFiles * 100, 100);
@@ -415,6 +420,26 @@ const QueuePanel = {
 
     if (type === 'batch_queued') {
       this.refresh();
+      return;
+    }
+
+    if (type === 'batch_started') {
+      // Worker picked up the batch (incl. recovered batches after restart):
+      // flip badge queued -> processing in place.
+      const card = document.querySelector(`.task-card[data-batch-id="${batchId}"]`);
+      if (card) {
+        const badge = card.querySelector('.batch-status');
+        if (badge && badge.classList.contains('queued')) {
+          badge.className = 'batch-status processing';
+          badge.textContent = '处理中';
+        }
+        const textEl = card.querySelector('.task-card-progress');
+        if (textEl && textEl.textContent.startsWith('排队')) {
+          textEl.textContent = '准备中...';
+        }
+      } else {
+        this.refresh();
+      }
       return;
     }
 

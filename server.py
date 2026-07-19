@@ -126,7 +126,10 @@ def list_batches(request: Request):
     limit = int(qp.get("limit", "50")) if qp else 50
     batches = batch_manager.list_batches(limit=limit, status=status)
     for b in batches:
-        if b["status"] == "processing":
+        # Attach progress snapshots to active batches (queued batches may
+        # already have completed files from an interrupted run, so their
+        # file-level progress is meaningful too).
+        if b["status"] in ("processing", "queued"):
             try:
                 b["progress"] = batch_manager.get_batch_live_progress(b["batch_id"])
             except Exception:

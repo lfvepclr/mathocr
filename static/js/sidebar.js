@@ -119,7 +119,10 @@ const Sidebar = {
     let progressText = cached?.text || '';
     if (!progressText) {
       if (batch.status === 'queued') {
-        progressText = '排队中...';
+        // Interrupted batch awaiting resume: show partial file-level progress
+        progressText = (cached && cached.doneFiles > 0)
+          ? `排队中 · 已完成 ${cached.doneFiles}/${cached.totalFiles} 文件`
+          : '排队中...';
       } else if (cached && cached.curTotal > 0) {
         const curFileNum = Math.min(cached.doneFiles + 1, cached.totalFiles);
         progressText = `解析中 ${cached.curDone}/${cached.curTotal} 页 · 文件 ${curFileNum}/${cached.totalFiles}`;
@@ -264,6 +267,24 @@ const Sidebar = {
         doneFiles: 0, curDone: 0, curTotal: 0, fileName: '', text: '排队中...', pct: 0,
       };
       if (!p.text) p.text = '排队中...';
+      this.updateProgressUI(batchId);
+      return;
+    }
+
+    if (type === 'batch_started') {
+      // Worker picked up the batch (also fired for recovered batches after
+      // a server restart): flip badge queued -> processing immediately.
+      const badge = item.querySelector('.batch-status');
+      if (badge && badge.classList.contains('queued')) {
+        badge.className = 'batch-status processing';
+        badge.textContent = '处理中';
+      }
+      this.ensureProgressRow(item);
+      const p = this.batchProgress[batchId] = this.batchProgress[batchId] || {
+        totalFiles: parseInt(item.dataset.fileCount || '1', 10) || 1,
+        doneFiles: 0, curDone: 0, curTotal: 0, fileName: '', text: '准备中...', pct: 0,
+      };
+      if (!p.text || p.text === '排队中...') p.text = '准备中...';
       this.updateProgressUI(batchId);
       return;
     }

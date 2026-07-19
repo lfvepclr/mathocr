@@ -100,6 +100,78 @@ def _init_db(conn: sqlite3.Connection):
         )
     """)
     conn.commit()
+    _migrate_columns(conn)
+
+
+# Expected columns per table. Used by _migrate_columns() to bring OLD
+# databases up to date: CREATE TABLE IF NOT EXISTS does NOT add new columns
+# to pre-existing tables, so without this an upgraded server would crash
+# with "no such column" against an older metadata.db.
+_EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
+    "batches": {
+        "batch_id": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "status": "TEXT DEFAULT 'processing'",
+        "file_count": "INTEGER DEFAULT 0",
+        "alias": "TEXT",
+        "completed_at": "TIMESTAMP",
+        "processing_time": "REAL DEFAULT 0",
+    },
+    "files": {
+        "batch_id": "TEXT NOT NULL DEFAULT ''",
+        "file_id": "TEXT NOT NULL DEFAULT ''",
+        "original_name": "TEXT NOT NULL DEFAULT ''",
+        "file_type": "TEXT",
+        "file_size": "INTEGER DEFAULT 0",
+        "page_count": "INTEGER DEFAULT 0",
+        "total_pages": "INTEGER DEFAULT 0",
+        "status": "TEXT DEFAULT 'pending'",
+        "error_message": "TEXT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "completed_at": "TIMESTAMP",
+        "processing_time": "REAL DEFAULT 0",
+    },
+    "pages": {
+        "batch_id": "TEXT NOT NULL DEFAULT ''",
+        "file_id": "TEXT NOT NULL DEFAULT ''",
+        "page_id": "INTEGER NOT NULL DEFAULT 0",
+        "has_result": "INTEGER DEFAULT 0",
+        "block_count": "INTEGER DEFAULT 0",
+        "avg_score": "REAL DEFAULT 0",
+        "markdown_path": "TEXT",
+        "json_path": "TEXT",
+        "original_image_path": "TEXT",
+        "annotated_image_path": "TEXT",
+        "images_dir": "TEXT",
+        "processing_time": "REAL DEFAULT 0",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    },
+}
+
+
+def _migrate_columns(conn: sqlite3.Connection):
+    """Add any missing expected columns to existing tables (schema upgrade).
+
+    Idempotent and additive-only: existing data is never altered. SQLite's
+    ALTER TABLE ADD COLUMN cannot declare PRIMARY KEY/UNIQUE, but those
+    columns always exist from the original CREATE TABLE, so plain column
+    types suffice here.
+    """
+    for table, columns in _EXPECTED_COLUMNS.items():
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        if not existing:
+            continue  # table was just created above with full schema
+        for col, ddl in columns.items():
+            if col not in existing:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"
+                )
+                logger.info(
+                    "DB migration: added column %s.%s (%s)", table, col, ddl
+                )
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -80,8 +80,8 @@ const App = {
 
     const es = new EventSource('/api/events');
     App.globalEventSource = es;
-    ['batch_queued', 'file_started', 'page_started', 'page_completed',
-     'file_completed', 'batch_completed'].forEach(type => {
+    ['batch_queued', 'batch_started', 'file_started', 'page_started',
+     'page_completed', 'file_completed', 'batch_completed'].forEach(type => {
       es.addEventListener(type, (e) => {
         const data = JSON.parse(e.data);
         Sidebar.handleGlobalEvent(type, data);

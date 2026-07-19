@@ -96,6 +96,12 @@ class JobQueue:
             try:
                 batch_manager.update_batch_status(batch_id, "processing")
                 logger.info("Worker processing batch %s", batch_id)
+                # Notify global listeners (sidebar / queue panel) so they can
+                # flip the badge queued -> processing immediately — important
+                # after a server restart, where recovered batches resume
+                # without any upload-time events.
+                from event_bus import event_bus
+                event_bus.publish(batch_id, "batch_started", {})
                 batch_manager.process_batch_background(batch_id)
             except Exception:
                 logger.exception("Worker error processing batch %s", batch_id)
