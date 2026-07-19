@@ -308,6 +308,42 @@ def get_legend(_request: Request):
 # ===========================================================================
 # API: SSE real-time events
 # ===========================================================================
+@app.get("/api/events")
+def global_events(request: Request):
+    """Global SSE stream: events from ALL batches.
+
+    Drives the sidebar batch progress and the home-page queue panel with a
+    single connection, independent of which batch (if any) is being viewed.
+    """
+    q = event_bus.subscribe("*")
+
+    def event_stream():
+        start_time = time.time()
+        while True:
+            # Max 10 min per connection; EventSource auto-reconnects
+            if time.time() - start_time > 600:
+                yield f"event: timeout\ndata: {{}}\n\n"
+                break
+            try:
+                event = q.get(timeout=15)
+                event_type = event.get("type", "message")
+                event_data = json.dumps(event.get("data", {}), ensure_ascii=False)
+                yield f"event: {event_type}\ndata: {event_data}\n\n"
+            except queue.Empty:
+                # Keepalive ping
+                yield f"event: ping\ndata: {{}}\n\n"
+        event_bus.unsubscribe("*", q)
+
+    return StreamingResponse(
+        event_stream(),
+        headers=Headers({
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }),
+    )
+
+
 @app.get("/api/events/:batch_id")
 def batch_events(request: Request):
     """SSE stream for real-time batch processing updates."""

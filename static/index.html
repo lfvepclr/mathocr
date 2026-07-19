@@ -38,10 +38,10 @@
 
     <!-- ============ Sidebar FAB (visible when sidebar collapsed) ============ -->
     <div id="sidebar-fab" class="sidebar-fab" style="display:none">
-      <button id="fab-new" class="fab-btn fab-new" title="新建解析 (可拖拽文件到此处)">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span>新建</span>
+      <button id="fab-new" class="fab-btn fab-new" title="新建解析：点击或拖拽文件到此处">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       </button>
+      <span class="fab-divider"></span>
       <button id="fab-expand" class="fab-btn fab-expand" title="展开侧边栏">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
@@ -77,6 +77,11 @@
               <div class="progress-fill" id="progress-fill"></div>
             </div>
             <p id="progress-text" class="progress-text">处理中...</p>
+          </div>
+          <!-- Task queue: queued / processing batches with live progress -->
+          <div id="task-queue" class="task-queue" style="display:none">
+            <div class="task-queue-title">任务队列</div>
+            <div id="task-queue-list"></div>
           </div>
         </div>
       </div>
@@ -127,13 +132,19 @@
                 <button id="zoom-reset" class="btn-icon" title="重置缩放">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 4 3 12 11 12"/></svg>
                 </button>
+                <button id="overlay-toggle" class="btn-icon active" title="显示/隐藏识别区域框">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                </button>
                 <button id="left-fullscreen" class="btn-icon" title="全屏">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
                 </button>
               </div>
             </div>
             <div id="image-container" class="image-container">
-              <img id="page-image" src="" alt="页面图片" />
+              <div class="image-wrapper" id="image-wrapper">
+                <img id="page-image" src="" alt="页面图片" />
+                <svg id="overlay-svg" class="overlay-svg" preserveAspectRatio="none"></svg>
+              </div>
             </div>
           </div>
 
@@ -169,6 +180,15 @@
       </div>
     </main>
   </div>
+
+  <!-- Floating block copy button (hover any block to reveal) -->
+  <button id="block-copy-btn" class="block-copy-btn" style="display:none">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    <span>复制</span>
+  </button>
+
+  <!-- Overlay hover tooltip -->
+  <div id="overlay-tooltip" class="overlay-tooltip" style="display:none"></div>
 
   <!-- Fullscreen close button (dynamically positioned) -->
   <button id="fullscreen-close" class="fullscreen-close" style="display:none">

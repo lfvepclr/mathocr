@@ -15,7 +15,6 @@ import sqlite3
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -470,23 +469,18 @@ def process_batch_background(batch_id: str):
                               {"status": "completed", "processing_time": 0})
             return
 
-        max_workers = min(len(pending_files), 4)
-        logger.info("Processing batch %s with %d workers (%d/%d files pending)",
-                    batch_id, max_workers, len(pending_files), len(files))
+        # Files are processed SEQUENTIALLY: concurrent predict_iter calls on
+        # the shared PaddleOCR-VL pipeline are not thread-safe and crash.
+        logger.info("Processing batch %s sequentially (%d/%d files pending)",
+                    batch_id, len(pending_files), len(files))
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(_process_single_file, batch_id, f): f
-                for f in pending_files
-            }
-            for future in as_completed(futures):
-                file_info = futures[future]
-                try:
-                    future.result()
-                except Exception:
-                    logger.exception("File processing failed: %s", file_info["file_id"])
-                    update_file_status(batch_id, file_info["file_id"], "error",
-                                       error_message="Processing exception")
+        for file_info in pending_files:
+            try:
+                _process_single_file(batch_id, file_info)
+            except Exception:
+                logger.exception("File processing failed: %s", file_info["file_id"])
+                update_file_status(batch_id, file_info["file_id"], "error",
+                                   error_message="Processing exception")
 
         # Determine final batch status
         file_statuses = [f["status"] for f in get_files(batch_id)]

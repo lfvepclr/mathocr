@@ -3,6 +3,12 @@
    ============================================================ */
 
 const Sidebar = {
+  // Live per-batch progress cache for the global SSE channel:
+  // {batchId: {totalFiles, doneFiles, curDone, curTotal, fileName, text, pct}}
+  batchProgress: {},
+  _throttleTimers: {},
+  _refreshTimer: null,
+
   init() {
     this.loadBatches();
   },
@@ -17,6 +23,15 @@ const Sidebar = {
         container.innerHTML = '<div class="loading-hint">暂无历史批次</div>';
         return;
       }
+
+      // Drop cached progress for batches no longer active
+      const activeIds = new Set(
+        batches.filter(b => b.status === 'processing' || b.status === 'queued')
+          .map(b => b.batch_id)
+      );
+      Object.keys(this.batchProgress).forEach(id => {
+        if (!activeIds.has(id)) delete this.batchProgress[id];
+      });
 
       container.innerHTML = batches.map(b => this.renderBatchItem(b)).join('');
 
@@ -79,8 +94,17 @@ const Sidebar = {
       ? `耗时 ${App.formatDuration(batch.processing_time)}`
       : App.formatTime(batch.created_at);
 
+    // Batch-level live progress row (visible even when not expanded)
+    const isActive = batch.status === 'processing' || batch.status === 'queued';
+    const cached = this.batchProgress[batch.batch_id];
+    const progressHtml = isActive ? `
+        <div class="batch-progress">
+          <div class="batch-progress-text">${cached?.text || (batch.status === 'queued' ? '排队中...' : '准备中...')}</div>
+          <div class="file-progress-bar"><div class="file-progress-fill batch-progress-fill" style="width:${cached?.pct || 0}%"></div></div>
+        </div>` : '';
+
     return `
-      <div class="batch-item" data-batch-id="${batch.batch_id}" data-alias="${batch.alias || ''}">
+      <div class="batch-item" data-batch-id="${batch.batch_id}" data-alias="${batch.alias || ''}" data-file-count="${batch.file_count || 1}">
         <div class="batch-item-header">
           <div style="flex:1; min-width:0;">
             <div class="batch-item-name">${displayName}</div>
@@ -97,6 +121,7 @@ const Sidebar = {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
+        ${progressHtml}
         <div class="batch-files"></div>
       </div>
     `;
@@ -171,6 +196,120 @@ const Sidebar = {
     } catch (err) {
       filesContainer.innerHTML = '<div class="loading-hint">加载失败</div>';
     }
+  },
+
+  // ---- Global SSE events (all batches; dispatched from App.init) ----
+  handleGlobalEvent(type, data) {
+    const batchId = data.batch_id;
+    if (!batchId) return;
+
+    if (type === 'batch_completed') {
+      delete this.batchProgress[batchId];
+      this.loadBatches();
+      return;
+    }
+
+    const item = document.querySelector(`.batch-item[data-batch-id="${batchId}"]`);
+    if (!item) {
+      // Batch row not rendered yet (e.g. freshly queued) — refresh list
+      this.throttledRefresh();
+      return;
+    }
+
+    if (type === 'batch_queued') {
+      this.ensureProgressRow(item);
+      const p = this.batchProgress[batchId] = this.batchProgress[batchId] || {
+        totalFiles: parseInt(item.dataset.fileCount || '1', 10) || 1,
+        doneFiles: 0, curDone: 0, curTotal: 0, fileName: '', text: '排队中...', pct: 0,
+      };
+      if (!p.text) p.text = '排队中...';
+      this.updateProgressUI(batchId);
+      return;
+    }
+
+    // Progress events (file_started / page_started / page_completed / file_completed)
+    const p = this.batchProgress[batchId] = this.batchProgress[batchId] || {
+      totalFiles: parseInt(item.dataset.fileCount || '1', 10) || 1,
+      doneFiles: 0, curDone: 0, curTotal: 0, fileName: '', text: '', pct: 0,
+    };
+
+    if (type === 'file_started') {
+      p.fileName = data.original_name || '';
+      p.curDone = 0;
+      p.curTotal = 0;
+      // Flip badge from queued to processing in place
+      const badge = item.querySelector('.batch-status');
+      if (badge && badge.classList.contains('queued')) {
+        badge.className = 'batch-status processing';
+        badge.textContent = '处理中';
+      }
+    } else if (type === 'page_started') {
+      p.curTotal = data.total_pages || p.curTotal;
+    } else if (type === 'page_completed') {
+      p.curDone = data.completed_pages ?? p.curDone;
+      p.curTotal = data.total_pages || p.curTotal;
+    } else if (type === 'file_completed') {
+      p.doneFiles++;
+      p.curDone = 0;
+      p.curTotal = 0;
+    }
+
+    const filePct = p.curTotal > 0 ? p.curDone / p.curTotal : 0;
+    p.pct = Math.min((p.doneFiles + filePct) / p.totalFiles * 100, 100);
+    const curFileNum = Math.min(p.doneFiles + 1, p.totalFiles);
+    if (p.curTotal > 0) {
+      p.text = `解析中 ${p.curDone}/${p.curTotal} 页 · 文件 ${curFileNum}/${p.totalFiles}`;
+    } else if (p.fileName) {
+      p.text = `解析中: ${p.fileName}`;
+    } else {
+      p.text = '准备中...';
+    }
+
+    this.ensureProgressRow(item);
+    this.throttledUpdate(batchId);
+
+    // Keep expanded file rows in sync as well (idempotent)
+    this.handleProgressEvent(type, data);
+  },
+
+  ensureProgressRow(item) {
+    let row = item.querySelector(':scope > .batch-progress');
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'batch-progress';
+      row.innerHTML = '<div class="batch-progress-text"></div>' +
+        '<div class="file-progress-bar"><div class="file-progress-fill batch-progress-fill"></div></div>';
+      item.insertBefore(row, item.querySelector('.batch-files'));
+    }
+    row.style.display = '';
+  },
+
+  updateProgressUI(batchId) {
+    const item = document.querySelector(`.batch-item[data-batch-id="${batchId}"]`);
+    const p = this.batchProgress[batchId];
+    if (!item || !p) return;
+    const row = item.querySelector(':scope > .batch-progress');
+    if (!row) return;
+    const textEl = row.querySelector('.batch-progress-text');
+    const fillEl = row.querySelector('.batch-progress-fill');
+    if (textEl) textEl.textContent = p.text;
+    if (fillEl) fillEl.style.width = p.pct + '%';
+  },
+
+  throttledUpdate(batchId) {
+    if (this._throttleTimers[batchId]) return;
+    this._throttleTimers[batchId] = setTimeout(() => {
+      delete this._throttleTimers[batchId];
+      this.updateProgressUI(batchId);
+    }, 300);
+  },
+
+  throttledRefresh() {
+    if (this._refreshTimer) return;
+    this._refreshTimer = setTimeout(() => {
+      this._refreshTimer = null;
+      this.loadBatches();
+    }, 500);
   },
 
   // ---- Real-time progress updates (called from Uploader SSE handlers) ----

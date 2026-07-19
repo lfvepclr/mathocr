@@ -51,8 +51,11 @@ class JobQueue:
     def enqueue(self, batch_id: str):
         """Add a batch to the processing queue (persists in SQLite)."""
         import batch_manager
+        from event_bus import event_bus
 
         batch_manager.update_batch_status(batch_id, "queued")
+        # Notify global listeners (sidebar / queue panel) immediately
+        event_bus.publish(batch_id, "batch_queued", {})
         self._wake_event.set()
         logger.info(
             "Batch %s enqueued (queue size: %d)",

@@ -53,9 +53,43 @@ const App = {
       });
     });
 
+    // ---- Global SSE: one connection drives sidebar batch progress and
+    // the home-page queue panel, regardless of which view is active ----
+    App.initGlobalEvents();
+    QueuePanel.refresh();
+
     // Handle hash routing
     window.addEventListener('hashchange', () => App.handleRoute());
     App.handleRoute();
+  },
+
+  // ---- Global event channel ----
+  initGlobalEvents() {
+    let pollTimer = null;
+    const startPollingFallback = () => {
+      if (pollTimer) return;
+      pollTimer = setInterval(() => QueuePanel.refresh(), 5000);
+    };
+    const stopPollingFallback = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const es = new EventSource('/api/events');
+    App.globalEventSource = es;
+    ['batch_queued', 'file_started', 'page_started', 'page_completed',
+     'file_completed', 'batch_completed'].forEach(type => {
+      es.addEventListener(type, (e) => {
+        const data = JSON.parse(e.data);
+        Sidebar.handleGlobalEvent(type, data);
+        QueuePanel.handleEvent(type, data);
+      });
+    });
+    // EventSource auto-reconnects; poll the queue panel while disconnected
+    es.onopen = () => stopPollingFallback();
+    es.onerror = () => startPollingFallback();
   },
 
   // ---- View switching ----
@@ -109,9 +143,24 @@ const App = {
     }
   },
 
-  openFile(fileId, pageId = 0) {
+  async openFile(fileId, pageId = 0) {
     App.state.currentFile = fileId;
     App.state.currentPage = pageId;
+
+    // Ensure batchData (page counts, file tabs) is available for ALL entry
+    // paths — sidebar file clicks and deep links skip openBatch().
+    if (!App.state.batchData || App.state.batchData.batch_id !== App.state.currentBatch) {
+      try {
+        const resp = await fetch(`/api/batch/${App.state.currentBatch}`);
+        const data = await resp.json();
+        if (!data.error) {
+          App.state.batchData = data;
+          Viewer.renderFileTabs(data.files || []);
+        }
+      } catch (err) {
+        console.warn('batchData fetch failed:', err);
+      }
+    }
 
     // Update file tabs
     document.querySelectorAll('.file-tab').forEach(tab => {

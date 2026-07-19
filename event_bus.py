@@ -46,14 +46,20 @@ class EventBus:
                     del self._subscribers[batch_id]
 
     def publish(self, batch_id: str, event_type: str, data: dict[str, Any]):
-        """Push an event to all subscribers of a batch."""
+        """Push an event to subscribers of a batch AND to global ('*') subscribers.
+
+        batch_id is injected into the payload so global-channel consumers can
+        attribute events to their batch (the SSE layer only forwards `data`).
+        """
         event = {
             "type": event_type,
-            "data": data,
+            "data": {**data, "batch_id": batch_id},
             "timestamp": datetime.now().isoformat(),
         }
         with self._lock:
             subs = list(self._subscribers.get(batch_id, []))
+            if batch_id != "*":
+                subs += list(self._subscribers.get("*", []))
         for q in subs:
             try:
                 q.put_nowait(event)

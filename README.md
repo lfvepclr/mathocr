@@ -1,7 +1,7 @@
 # MathOCR — PaddleOCR-VL 文档解析平台
 
 基于 PaddleOCR-VL-1.6 的文档智能解析平台,支持 PDF/图片多格式输入,并行 OCR 识别,原图与解析结果对比(含置信度色块标注),历史批次管理,Markdown/Word 导出。
-![图片](assets/Snipaste_2026-07-19_14-16-07.png)
+![图片](assets/Snipaste_2026-07-19_15-57-47.png)
 ![图片](assets/Snipaste_2026-07-19_14-18-24.png)
 
 ## 功能特性

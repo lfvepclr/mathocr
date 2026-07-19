@@ -127,6 +127,35 @@ def _resolve_image_src(src: str, batch_id: str) -> Path | None:
 # ---------------------------------------------------------------------------
 # Markdown export
 # ---------------------------------------------------------------------------
+_IMG_MIME_MAP = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+}
+
+_IMG_SRC_API_RE = re.compile(r'src="/api/page_image/([^/]+)/([^/]+)/(\d+)/([^"]+)"')
+
+
+def _embed_images_base64(md_text: str) -> str:
+    """Replace /api/page_image/... URLs with base64 data URIs.
+
+    Exported markdown is meant to be shared outside this platform; API URLs
+    break as soon as the file leaves the server. Data URIs make the .md file
+    fully self-contained (any markdown viewer renders them inline).
+    """
+    def _sub(m: re.Match) -> str:
+        b_id, f_id, page_id, img_name = m.group(1), m.group(2), m.group(3), m.group(4)
+        img_path = (BATCHES_DIR / b_id / "results" / f_id
+                    / f"page_{page_id}_images" / img_name)
+        if not img_path.exists():
+            logger.warning("Image not found for base64 embedding: %s", img_path)
+            return m.group(0)
+        mime = _IMG_MIME_MAP.get(img_path.suffix.lower(), "image/png")
+        b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
+        return f'src="data:{mime};base64,{b64}"'
+
+    return _IMG_SRC_API_RE.sub(_sub, md_text)
+
+
 def export_markdown(batch_id: str, file_id: str) -> str:
     """
     Export a single file's markdown (all pages combined).
@@ -153,7 +182,7 @@ def export_markdown(batch_id: str, file_id: str) -> str:
 
     file_index = get_file_index(batch_id, file_id)
     out_path = exports_dir / f"{batch_id}_{file_index}_{stem}.md"
-    out_path.write_text("\n".join(parts), encoding="utf-8")
+    out_path.write_text(_embed_images_base64("\n".join(parts)), encoding="utf-8")
     return str(out_path)
 
 
@@ -174,7 +203,7 @@ def export_batch_markdown(batch_id: str) -> str:
                 parts.append("\n\n---\n\n")
 
     out_path = exports_dir / f"batch_{batch_id}.md"
-    out_path.write_text("\n".join(parts), encoding="utf-8")
+    out_path.write_text(_embed_images_base64("\n".join(parts)), encoding="utf-8")
     return str(out_path)
 
 

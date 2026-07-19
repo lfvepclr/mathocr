@@ -63,19 +63,20 @@ img { max-width: 100%; display: block; }
 #sidebar.collapsed .sidebar-header,
 #sidebar.collapsed .sidebar-section { display: none; }
 
-/* ---- Sidebar FAB (collapsed state) ---- */
+/* ---- Sidebar FAB (collapsed state): edge-hugging curved handle ---- */
 .sidebar-fab {
   position: fixed;
-  top: 12px;
-  left: 12px;
+  top: 14px;
+  left: 0;
   z-index: 900;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px;
+  gap: 2px;
+  padding: 8px 12px 8px 10px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-left: none;
+  border-radius: 0 26px 26px 0;
   box-shadow: var(--shadow-lg);
   transition: border-color var(--transition), background var(--transition);
 }
@@ -88,22 +89,27 @@ img { max-width: 100%; display: block; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  border-radius: 18px;
-  font-size: 13px;
-  font-weight: 600;
   transition: all var(--transition);
   cursor: pointer;
 }
 .fab-new {
-  padding: 7px 14px 7px 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
   background: var(--primary);
   color: #fff;
 }
 .fab-new:hover { background: var(--primary-hover); }
+.fab-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
 .fab-expand {
   width: 28px;
   height: 28px;
+  border-radius: 50%;
   color: var(--text-muted);
 }
 .fab-expand:hover { background: var(--border-light); color: var(--text); }
@@ -364,12 +370,41 @@ img { max-width: 100%; display: block; }
   padding: 16px;
   background: #f1f5f9;
 }
-.image-container img {
-  max-width: none;
+/* Wrapper keeps img + SVG overlay locked together (zoom applies here) */
+.image-wrapper {
+  position: relative;
+  display: block;
+  width: fit-content;
   margin: 0 auto;
-  box-shadow: var(--shadow);
   transition: transform var(--transition);
 }
+.image-wrapper img {
+  max-width: none;
+  display: block;
+  box-shadow: var(--shadow);
+}
+
+/* ---- SVG Overlay (recognition region polygons) ---- */
+.overlay-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.overlay-svg polygon {
+  pointer-events: all;
+  cursor: pointer;
+  fill-opacity: .15;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  transition: fill-opacity .15s ease;
+}
+.overlay-svg polygon.hl { fill-opacity: .35; stroke-width: 3; }
+.overlay-svg polygon.c0 { fill: #22c55e; stroke: #16a34a; }
+.overlay-svg polygon.c1 { fill: #3b82f6; stroke: #2563eb; }
+.overlay-svg polygon.c2 { fill: #eab308; stroke: #ca8a04; }
+.overlay-svg polygon.c3 { fill: #ef4444; stroke: #dc2626; }
 
 /* ---- Markdown Container ---- */
 .markdown-container {
@@ -438,6 +473,11 @@ img { max-width: 100%; display: block; }
   transition: background var(--transition);
 }
 .btn-primary:hover { background: var(--primary-hover); }
+.btn-primary.dragover {
+  outline: 2px dashed #fff;
+  outline-offset: -4px;
+  background: var(--primary-hover);
+}
 
 .btn-secondary {
   padding: 4px 10px;
@@ -512,6 +552,145 @@ img { max-width: 100%; display: block; }
 .legend-items { display: flex; flex-direction: column; gap: 4px; }
 .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .legend-color { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+
+/* ============================================================
+   Batch Progress (sidebar, batch-level live progress)
+   ============================================================ */
+.batch-progress { margin-top: 6px; }
+.batch-progress-text { font-size: 11px; color: var(--primary); }
+.batch-progress .file-progress-bar { margin-left: 0; }
+
+/* ============================================================
+   Task Queue (home page: queued / processing batches)
+   ============================================================ */
+.task-queue {
+  width: 480px;
+  max-width: 90vw;
+  margin-top: 24px;
+}
+.task-queue-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+#task-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.task-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: box-shadow var(--transition), border-color var(--transition);
+}
+.task-card:hover {
+  box-shadow: var(--shadow-lg);
+  border-color: var(--primary);
+}
+.task-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.task-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-card-progress {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 0 4px;
+}
+.task-card .file-progress-bar { margin-left: 0; margin-top: 0; }
+
+/* ============================================================
+   Markdown Blocks (per-region rendering + hover linkage)
+   ============================================================ */
+.md-block {
+  position: relative;
+  padding: 4px 10px;
+  margin: 2px -10px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  transition: border-color .15s, background .15s;
+}
+.md-block.hl {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+.md-block-tag {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--primary);
+  background: var(--primary-light);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-bottom: 2px;
+  display: inline-block;
+  opacity: .75;
+  user-select: none;
+}
+.md-block.hl .md-block-tag { opacity: 1; }
+.md-block-body > :first-child { margin-top: 0; }
+.md-block-body > :last-child { margin-bottom: 0; }
+/* Title blocks carry no '#' prefix in block_content — style by label */
+.md-block[data-label="doc_title"] .md-block-body {
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.md-block[data-label="paragraph_title"] .md-block-body {
+  font-size: 1.15em;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* ---- Floating block copy button ---- */
+.block-copy-btn {
+  position: fixed;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+  transition: color var(--transition), border-color var(--transition);
+}
+.block-copy-btn:hover { color: var(--primary); border-color: var(--primary); }
+.block-copy-btn.copied { color: var(--success); border-color: var(--success); }
+
+/* ---- Overlay hover tooltip ---- */
+.overlay-tooltip {
+  position: fixed;
+  z-index: 600;
+  pointer-events: none;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.88);
+  border-radius: 4px;
+  white-space: nowrap;
+}
 
 /* ============================================================
    Scrollbar
