@@ -210,6 +210,24 @@ img { max-width: 100%; display: block; }
 .batch-item:hover .batch-delete-btn { opacity: 0.6; }
 .batch-delete-btn:hover { opacity: 1; }
 
+.batch-export-btn {
+  opacity: 0;
+  transition: opacity var(--transition);
+  color: var(--primary);
+  padding: 2px;
+}
+.batch-item:hover .batch-export-btn { opacity: 0.7; }
+.batch-export-btn:hover { opacity: 1; }
+
+/* Elapsed-time ticker inside batch progress rows / queue cards */
+.batch-elapsed, .task-elapsed {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.live-elapsed:empty { display: none; }
+
 .loading-hint { padding: 12px 8px; color: var(--text-muted); font-size: 13px; }
 
 /* ============================================================
@@ -329,6 +347,55 @@ img { max-width: 100%; display: block; }
 .btn-toggle:not(.active):hover { background: var(--border-light); }
 
 .export-buttons { display: flex; gap: 4px; }
+
+/* ---- Export dropdown ---- */
+.export-dropdown { position: relative; }
+#export-menu-btn { display: inline-flex; align-items: center; gap: 6px; }
+.export-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 250px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+  z-index: 200;
+}
+.export-menu-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 8px 10px 4px;
+}
+.export-scope { color: var(--text); font-weight: 600; }
+.export-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.export-menu-item:hover { background: var(--border-light); }
+.export-menu-item svg { flex-shrink: 0; color: var(--text-muted); }
+.export-item-desc {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.result-file-name {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
 
 /* ============================================================
    Split View

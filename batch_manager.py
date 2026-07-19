@@ -141,10 +141,23 @@ def get_file_type(filename: str) -> str:
 # ---------------------------------------------------------------------------
 # Batch CRUD
 # ---------------------------------------------------------------------------
+# Natural sort: split digit runs so page2 < page10 (intuitive for humans)
+_NATURAL_SORT_RE = re.compile(r"(\d+)")
+
+
+def _natural_sort_key(name: str) -> list:
+    return [int(t) if t.isdigit() else t.lower()
+            for t in _NATURAL_SORT_RE.split(name)]
+
+
 def create_batch(uploaded_files: list[tuple[str, bytes]]) -> str:
     batch_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     uploads_dir = get_uploads_dir(batch_id)
     uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    # Process files in natural filename order: processing, sidebar display and
+    # exports all follow the DB insertion order, so sort once here.
+    uploaded_files = sorted(uploaded_files, key=lambda fc: _natural_sort_key(fc[0]))
 
     file_records = []
     for idx, (filename, content) in enumerate(uploaded_files):
@@ -176,6 +189,36 @@ def create_batch(uploaded_files: list[tuple[str, bytes]]) -> str:
 
     logger.info("Created batch %s with %d files", batch_id, len(file_records))
     return batch_id
+
+
+def get_batch_live_progress(batch_id: str) -> dict:
+    """Live progress snapshot for an active batch, derived from the DB.
+
+    Lets the frontend restore percentage displays immediately after a page
+    refresh, without waiting for the next SSE event (pages can take >1 min).
+    """
+    files = get_files(batch_id)
+    total = len(files) or 1
+    done = sum(1 for f in files if f["status"] == "completed")
+    cur = next((f for f in files if f["status"] == "processing"), None)
+    cur_done = cur_total = 0
+    file_name = ""
+    if cur:
+        cur_total = cur["total_pages"] or 0
+        cur_done = sum(
+            1 for p in get_pages(batch_id, cur["file_id"]) if p["has_result"]
+        )
+        file_name = cur["original_name"]
+    file_pct = (cur_done / cur_total) if cur_total else 0.0
+    pct = min((done + file_pct) / total * 100, 100.0)
+    return {
+        "total_files": total,
+        "done_files": done,
+        "cur_done": cur_done,
+        "cur_total": cur_total,
+        "file_name": file_name,
+        "pct": round(pct, 1),
+    }
 
 
 def update_batch_status(batch_id: str, status: str, processing_time: float | None = None):

@@ -109,9 +109,32 @@
             <button id="image-toggle" class="btn-icon" title="切换标注/原图">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
             </button>
-            <div class="export-buttons">
-              <button id="export-md" class="btn-secondary" title="导出 Markdown">MD</button>
-              <button id="export-docx" class="btn-secondary" title="导出 Word">Word</button>
+            <div class="export-dropdown" id="export-dropdown">
+              <button id="export-menu-btn" class="btn-secondary" title="导出解析结果">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>导出</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+              <div id="export-menu" class="export-menu" style="display:none">
+                <div class="export-menu-label">当前文件 <span id="export-scope-file" class="export-scope"></span></div>
+                <button class="export-menu-item" data-export="file-md">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  Markdown <span class="export-item-desc">.md 纯文本，自包含图片</span>
+                </button>
+                <button class="export-menu-item" data-export="file-docx">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                  Word <span class="export-item-desc">.docx 文档</span>
+                </button>
+                <div class="export-menu-label">整批导出 <span id="export-scope-batch" class="export-scope"></span></div>
+                <button class="export-menu-item" data-export="batch-md">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  Markdown <span class="export-item-desc">全部文件，带分隔</span>
+                </button>
+                <button class="export-menu-item" data-export="batch-docx">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                  Word <span class="export-item-desc">全部文件，分页分隔</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -151,7 +174,7 @@
           <!-- Right Panel: Markdown Output -->
           <div id="right-panel" class="panel">
             <div class="panel-header">
-              <span class="panel-title">解析结果</span>
+              <span class="panel-title">解析结果 <span id="result-file-name" class="result-file-name"></span></span>
               <div class="panel-controls">
                 <button id="sync-scroll" class="btn-icon active" title="同步滚动">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 6H3M21 12H3M21 18H3"/></svg>

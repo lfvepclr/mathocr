@@ -187,20 +187,27 @@ def export_markdown(batch_id: str, file_id: str) -> str:
 
 
 def export_batch_markdown(batch_id: str) -> str:
-    """Export all files in a batch as a single markdown file."""
+    """Export all files in a batch as a single markdown file.
+
+    Each file is preceded by a visible separator + file-name heading so the
+    reader can tell where one document ends and the next begins.
+    """
     files = get_files(batch_id)
     exports_dir = BATCHES_DIR / batch_id / "exports"
     exports_dir.mkdir(parents=True, exist_ok=True)
 
     parts = []
-    for f in files:
+    for i, f in enumerate(files):
+        if i > 0:
+            parts.append("\n\n---\n\n")  # file separator (horizontal rule)
         parts.append(f"# {f['original_name']}\n\n")
         pages = get_pages(batch_id, f["file_id"])
-        for p in pages:
+        for j, p in enumerate(pages):
             md_path = Path(p["markdown_path"]) if p["markdown_path"] else None
             if md_path and md_path.exists():
+                if j > 0:
+                    parts.append("\n\n---\n\n")  # page separator
                 parts.append(md_path.read_text(encoding="utf-8"))
-                parts.append("\n\n---\n\n")
 
     out_path = exports_dir / f"batch_{batch_id}.md"
     out_path.write_text(_embed_images_base64("\n".join(parts)), encoding="utf-8")
@@ -254,6 +261,46 @@ def export_word(batch_id: str, file_id: str) -> str:
     out_path = exports_dir / f"{batch_id}_{file_index}_{stem}.docx"
     doc.save(str(out_path))
     logger.info("Word export saved: %s", out_path)
+    return str(out_path)
+
+
+def export_batch_word(batch_id: str) -> str:
+    """Export all files in a batch as a single Word (.docx) document.
+
+    Each file starts on a new page with its name as a title, so documents are
+    clearly separated. Files follow the batch's (filename-sorted) order.
+    """
+    from docx import Document
+    from docx.shared import Pt
+
+    files = get_files(batch_id)
+    exports_dir = BATCHES_DIR / batch_id / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.size = Pt(11)
+    style.font.name = "Helvetica"
+
+    for file_idx, f in enumerate(files):
+        if file_idx > 0:
+            doc.add_page_break()
+        # File separator: original filename as the document title
+        doc.add_heading(f["original_name"], level=0)
+
+        pages = get_pages(batch_id, f["file_id"])
+        for page_idx, page_info in enumerate(pages):
+            if page_idx > 0:
+                doc.add_page_break()
+            md_path = Path(page_info["markdown_path"]) if page_info["markdown_path"] else None
+            if not md_path or not md_path.exists():
+                doc.add_paragraph(f"[Page {page_info['page_id']} — no content]")
+                continue
+            _add_markdown_to_doc(doc, md_path.read_text(encoding="utf-8"), batch_id)
+
+    out_path = exports_dir / f"batch_{batch_id}.docx"
+    doc.save(str(out_path))
+    logger.info("Batch Word export saved: %s", out_path)
     return str(out_path)
 
 

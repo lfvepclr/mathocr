@@ -372,13 +372,40 @@ const QueuePanel = {
   renderCard(b) {
     const statusText = b.status === 'queued' ? '排队' : '处理中';
     const name = b.alias || b.batch_id;
+    // Seed the live cache from the server-side progress snapshot so the
+    // percentage survives a page refresh; event-driven entries win.
+    const snap = b.progress;
+    if (snap && !this.progress[b.batch_id]) {
+      this.progress[b.batch_id] = {
+        totalFiles: snap.total_files, doneFiles: snap.done_files,
+        curDone: snap.cur_done, curTotal: snap.cur_total,
+        fileName: snap.file_name,
+      };
+    }
+    const p = this.progress[b.batch_id];
+    let text = b.status === 'queued' ? '排队中...' : '准备中...';
+    let pct = 0;
+    if (p && b.status === 'processing') {
+      const filePct = p.curTotal > 0 ? p.curDone / p.curTotal : 0;
+      pct = Math.min((p.doneFiles + filePct) / p.totalFiles * 100, 100);
+      const curFileNum = Math.min(p.doneFiles + 1, p.totalFiles);
+      if (p.curTotal > 0) {
+        text = `解析中 ${p.curDone}/${p.curTotal} 页 · 文件 ${curFileNum}/${p.totalFiles}`;
+      } else if (p.fileName) {
+        text = `解析中: ${p.fileName} · 文件 ${curFileNum}/${p.totalFiles}`;
+      }
+    }
+    const elapsedHtml = b.status === 'processing'
+      ? `<span class="live-elapsed task-elapsed" data-started="${b.created_at || ''}"></span>`
+      : '';
     return `<div class="task-card" data-batch-id="${b.batch_id}" data-file-count="${b.file_count || 1}">
       <div class="task-card-head">
         <span class="task-card-name" title="${name}">${name}</span>
         <span class="batch-status ${b.status}">${statusText}</span>
       </div>
-      <div class="task-card-progress">${b.status === 'queued' ? '排队中...' : '准备中...'}</div>
-      <div class="file-progress-bar"><div class="file-progress-fill task-card-fill" style="width:0%"></div></div>
+      <div class="task-card-progress">${text}</div>
+      ${elapsedHtml}
+      <div class="file-progress-bar"><div class="file-progress-fill task-card-fill" style="width:${pct}%"></div></div>
     </div>`;
   },
 

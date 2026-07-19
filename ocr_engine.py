@@ -3,6 +3,16 @@ PaddleOCR-VL-1.6 OCR Engine with parallel processing support.
 
 Provides a singleton pipeline, single-document processing, and
 parallel batch processing using ThreadPoolExecutor.
+
+Inference backend (Apple Silicon optimization):
+  - If a VLM inference server is reachable (default http://localhost:8111/),
+    the pipeline offloads VLM recognition to it via vl_rec_backend
+    (e.g. MLX-VLM, which runs on the Apple GPU and is far faster than CPU).
+    Start one with:  mlx_vlm.server --port 8111 --model ~/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6
+    (start.sh automates this, including downloading the model via ModelScope)
+  - Otherwise it falls back to local Paddle inference on CPU.
+  Env overrides: OCR_VL_REC_BACKEND, OCR_VL_REC_SERVER_URL,
+                 OCR_VL_REC_API_MODEL_NAME, OCR_VL_REC_MAX_CONCURRENCY
 """
 
 import base64
@@ -11,6 +21,7 @@ import io
 import logging
 import os
 import threading
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +37,19 @@ _pipeline = None
 _pipeline_lock = threading.Lock()
 
 
+def _vlm_server_reachable(url: str, timeout: float = 0.8) -> bool:
+    """Probe whether a VLM inference server is up (cheap, best-effort)."""
+    base = url.rstrip("/")
+    for path in ("/health", "/v1/models", "/"):
+        try:
+            with urllib.request.urlopen(base + path, timeout=timeout) as resp:
+                if resp.status < 500:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
 def get_pipeline():
     """Return the global PaddleOCRVL pipeline, creating it on first call."""
     global _pipeline
@@ -34,14 +58,49 @@ def get_pipeline():
             if _pipeline is None:
                 from paddleocr import PaddleOCRVL
 
-                logger.info("Initializing PaddleOCRVL pipeline (CPU mode)…")
-                _pipeline = PaddleOCRVL(
+                kwargs: dict[str, Any] = dict(
                     device="cpu",
                     use_layout_detection=True,
                     use_doc_orientation_classify=False,
                     use_doc_unwarping=False,
                     use_chart_recognition=False,
                 )
+
+                # --- VLM backend selection (Apple Silicon acceleration) ---
+                vl_backend = os.environ.get("OCR_VL_REC_BACKEND", "").strip()
+                vl_server_url = os.environ.get(
+                    "OCR_VL_REC_SERVER_URL", "http://localhost:8111/"
+                )
+                if not vl_backend and _vlm_server_reachable(vl_server_url):
+                    # Auto-detect a running MLX-VLM (or compatible) server
+                    vl_backend = "mlx-vlm-server"
+
+                if vl_backend:
+                    kwargs.update(
+                        vl_rec_backend=vl_backend,
+                        vl_rec_server_url=vl_server_url,
+                        # 服务端 /v1/models 报告的模型 id
+                        # (start.sh 从本地路径预加载, 其 id 即为此名)
+                        vl_rec_api_model_name=os.environ.get(
+                            "OCR_VL_REC_API_MODEL_NAME",
+                            "PaddlePaddle/PaddleOCR-VL-1.6",
+                        ),
+                        vl_rec_max_concurrency=int(
+                            os.environ.get("OCR_VL_REC_MAX_CONCURRENCY", "4")
+                        ),
+                    )
+                    logger.info(
+                        "Initializing PaddleOCRVL with VLM server backend "
+                        "'%s' at %s …", vl_backend, vl_server_url,
+                    )
+                else:
+                    logger.info(
+                        "Initializing PaddleOCRVL pipeline (local CPU mode). "
+                        "Tip: run `./start.sh` (auto-starts MLX-VLM) for much "
+                        "faster recognition on Apple Silicon."
+                    )
+
+                _pipeline = PaddleOCRVL(**kwargs)
                 logger.info("PaddleOCRVL pipeline ready.")
     return _pipeline
 

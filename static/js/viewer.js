@@ -102,9 +102,22 @@ const Viewer = {
     leftContainer.addEventListener('scroll', () => this.handleScroll('left'));
     rightContainer.addEventListener('scroll', () => this.handleScroll('right'));
 
-    // Export buttons
-    document.getElementById('export-md').addEventListener('click', () => this.exportFile('md'));
-    document.getElementById('export-docx').addEventListener('click', () => this.exportFile('docx'));
+    // Export dropdown: toggle menu, close on outside click, run export
+    const exportMenu = document.getElementById('export-menu');
+    document.getElementById('export-menu-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportMenu.style.display = exportMenu.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#export-dropdown')) exportMenu.style.display = 'none';
+    });
+    exportMenu.querySelectorAll('.export-menu-item').forEach(item => {
+      item.addEventListener('click', () => {
+        exportMenu.style.display = 'none';
+        const [scope, format] = item.dataset.export.split('-');
+        this.exportFile(format, scope);
+      });
+    });
 
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
@@ -169,6 +182,16 @@ const Viewer = {
       // Update nav button states
       document.getElementById('prev-page').disabled = pageId <= 0;
       document.getElementById('next-page').disabled = pageId >= this.totalPages - 1;
+
+      // Export scope labels: show exactly what will be exported
+      const fileName = fileInfo?.original_name || '';
+      const batchFiles = App.state.batchData?.files || [];
+      const scopeFileEl = document.getElementById('export-scope-file');
+      const scopeBatchEl = document.getElementById('export-scope-batch');
+      if (scopeFileEl) scopeFileEl.textContent = fileName ? `（${fileName}）` : '';
+      if (scopeBatchEl) scopeBatchEl.textContent = batchFiles.length ? `（共 ${batchFiles.length} 个文件）` : '';
+      const resultNameEl = document.getElementById('result-file-name');
+      if (resultNameEl) resultNameEl.textContent = fileName ? `— ${fileName}` : '';
 
       // Render image (+ overlay on top of it)
       this.updateImage();
@@ -414,10 +437,23 @@ const Viewer = {
       // NOTE: title blocks carry no '#' prefix in block_content (paddlex adds
       // them only when concatenating the full-page markdown) — CSS styles
       // them via data-label instead.
+      //
+      // Image/chart blocks have EMPTY block_content in the JSON — the actual
+      // <img> tags live only in the full-page markdown. Extract them in
+      // reading order and inject one into each image-like block.
+      const imgTags = text.match(/<img[^>]*>/g) || [];
+      let imgCursor = 0;
       container.innerHTML = blocks.map((block, idx) => {
         const label = block.block_label || '';
         const labelZh = this.LABEL_MAP[label] || label;
-        const body = window.marked.parse(block.block_content || '');
+        let content = block.block_content || '';
+        if (!content.includes('<img') &&
+            (label === 'image' || label === 'chart' || label === 'seal')) {
+          const tag = imgTags[imgCursor] || '';
+          imgCursor++;
+          if (tag) content = `<div style="text-align:center">${tag}</div>`;
+        }
+        const body = window.marked.parse(content);
         return `<div class="md-block" data-block-idx="${idx}" data-label="${label}">
           <span class="md-block-tag">${labelZh}</span>
           <div class="md-block-body">${body}</div>
@@ -565,12 +601,17 @@ const Viewer = {
   },
 
   // ---- Export ----
-  exportFile(format) {
+  // scope: 'file' (current file only) or 'batch' (all files, with separators)
+  exportFile(format, scope = 'file') {
     const batchId = App.state.currentBatch;
-    const fileId = App.state.currentFile;
-    if (!batchId || !fileId) return;
+    if (!batchId) return;
 
-    const url = `/api/export/${batchId}?format=${format}&file_id=${fileId}`;
+    let url = `/api/export/${batchId}?format=${format}`;
+    if (scope === 'file') {
+      const fileId = App.state.currentFile;
+      if (!fileId) return;
+      url += `&file_id=${fileId}`;
+    }
     window.open(url, '_blank');
   },
 };

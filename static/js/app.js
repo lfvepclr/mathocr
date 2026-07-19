@@ -57,6 +57,7 @@ const App = {
     // the home-page queue panel, regardless of which view is active ----
     App.initGlobalEvents();
     QueuePanel.refresh();
+    App.startElapsedTicker();
 
     // Handle hash routing
     window.addEventListener('hashchange', () => App.handleRoute());
@@ -227,6 +228,34 @@ const App = {
         App.openBatch(batchId);
       }
     }
+  },
+
+  // ---- Elapsed-time ticker ----
+  // Updates every .live-elapsed[data-started] element once per second.
+  // data-started comes from SQLite CURRENT_TIMESTAMP (UTC, "YYYY-MM-DD HH:MM:SS").
+  startElapsedTicker() {
+    setInterval(() => {
+      document.querySelectorAll('.live-elapsed[data-started]').forEach(el => {
+        const sec = App.utcSeconds(el.dataset.started);
+        if (sec !== null) el.textContent = `已耗时 ${App.formatElapsed(sec)}`;
+      });
+    }, 1000);
+  },
+
+  utcSeconds(ts) {
+    if (!ts) return null;
+    const ms = Date.parse(ts.replace(' ', 'T') + 'Z');
+    if (isNaN(ms)) return null;
+    return Math.max(0, Math.floor((Date.now() - ms) / 1000));
+  },
+
+  formatElapsed(sec) {
+    if (sec < 60) return `${sec}s`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m < 60) return `${m}:${String(s).padStart(2, '0')}`;
+    const h = Math.floor(m / 60);
+    return `${h}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   },
 
   // ---- Utility ----

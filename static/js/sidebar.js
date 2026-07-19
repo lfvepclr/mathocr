@@ -37,7 +37,7 @@ const Sidebar = {
 
       container.querySelectorAll('.batch-item-header').forEach(header => {
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.batch-delete-btn') || e.target.closest('.batch-alias-btn')) return;
+          if (e.target.closest('.batch-delete-btn') || e.target.closest('.batch-alias-btn') || e.target.closest('.batch-export-btn')) return;
           const item = header.closest('.batch-item');
           const batchId = item.dataset.batchId;
 
@@ -46,6 +46,15 @@ const Sidebar = {
           } else {
             this.expandBatch(item, batchId);
           }
+        });
+      });
+
+      // Batch-level export: download the whole batch as one Markdown file
+      container.querySelectorAll('.batch-export-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const batchId = btn.closest('.batch-item').dataset.batchId;
+          window.open(`/api/export/${batchId}?format=md`, '_blank');
         });
       });
 
@@ -96,15 +105,43 @@ const Sidebar = {
 
     // Batch-level live progress row (visible even when not expanded)
     const isActive = batch.status === 'processing' || batch.status === 'queued';
+    // Seed the live cache from the server-side progress snapshot (survives
+    // page refresh); keep any fresher event-driven cache entry.
+    const snap = batch.progress;
+    if (isActive && snap && !this.batchProgress[batch.batch_id]) {
+      this.batchProgress[batch.batch_id] = {
+        totalFiles: snap.total_files, doneFiles: snap.done_files,
+        curDone: snap.cur_done, curTotal: snap.cur_total,
+        fileName: snap.file_name, text: '', pct: snap.pct || 0,
+      };
+    }
     const cached = this.batchProgress[batch.batch_id];
+    let progressText = cached?.text || '';
+    if (!progressText) {
+      if (batch.status === 'queued') {
+        progressText = '排队中...';
+      } else if (cached && cached.curTotal > 0) {
+        const curFileNum = Math.min(cached.doneFiles + 1, cached.totalFiles);
+        progressText = `解析中 ${cached.curDone}/${cached.curTotal} 页 · 文件 ${curFileNum}/${cached.totalFiles}`;
+      } else if (cached?.fileName) {
+        progressText = `解析中: ${cached.fileName}`;
+      } else {
+        progressText = '准备中...';
+      }
+    }
+    // Elapsed-time ticker for long-running batches (created_at is UTC)
+    const elapsedHtml = batch.status === 'processing'
+      ? `<span class="live-elapsed batch-elapsed" data-started="${batch.created_at}"></span>`
+      : '';
     const progressHtml = isActive ? `
         <div class="batch-progress">
-          <div class="batch-progress-text">${cached?.text || (batch.status === 'queued' ? '排队中...' : '准备中...')}</div>
+          <div class="batch-progress-text">${progressText}</div>
+          ${elapsedHtml}
           <div class="file-progress-bar"><div class="file-progress-fill batch-progress-fill" style="width:${cached?.pct || 0}%"></div></div>
         </div>` : '';
 
     return `
-      <div class="batch-item" data-batch-id="${batch.batch_id}" data-alias="${batch.alias || ''}" data-file-count="${batch.file_count || 1}">
+      <div class="batch-item" data-batch-id="${batch.batch_id}" data-alias="${batch.alias || ''}" data-file-count="${batch.file_count || 1}" data-created-at="${batch.created_at || ''}">
         <div class="batch-item-header">
           <div style="flex:1; min-width:0;">
             <div class="batch-item-name">${displayName}</div>
@@ -114,6 +151,10 @@ const Sidebar = {
             ${batch.processing_time ? `<div class="batch-time-info">${timeInfo}</div>` : ''}
           </div>
           <span class="batch-status ${statusClass}">${statusText}</span>
+          ${batch.status === 'completed' ? `
+          <button class="batch-export-btn" title="导出整批 Markdown（含文件分隔）">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>` : ''}
           <button class="batch-alias-btn" title="设置别名" style="opacity:0.4; padding:2px;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
@@ -278,10 +319,17 @@ const Sidebar = {
       row = document.createElement('div');
       row.className = 'batch-progress';
       row.innerHTML = '<div class="batch-progress-text"></div>' +
+        '<span class="live-elapsed batch-elapsed"></span>' +
         '<div class="file-progress-bar"><div class="file-progress-fill batch-progress-fill"></div></div>';
       item.insertBefore(row, item.querySelector('.batch-files'));
     }
     row.style.display = '';
+    // Keep the elapsed ticker anchored to this batch's creation time
+    const elapsed = row.querySelector('.live-elapsed');
+    if (elapsed && !elapsed.dataset.started) {
+      const started = item.dataset.createdAt;
+      if (started) elapsed.dataset.started = started;
+    }
   },
 
   updateProgressUI(batchId) {

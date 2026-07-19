@@ -41,6 +41,19 @@ uv pip install "gradio>=4.0" "pillow>=10.0"
 echo "=== Installing document export dependencies ==="
 uv pip install "python-docx>=1.1" "PyMuPDF>=1.24"
 
+# Apple Silicon acceleration: MLX-VLM serves the VLM recognition model on the
+# Apple GPU (much faster than local CPU inference). The web server auto-detects
+# a running MLX-VLM server at http://localhost:8111/ and uses it automatically.
+echo "=== Installing MLX-VLM (Apple Silicon GPU inference backend) ==="
+uv pip install "mlx-vlm>=0.3.11" || \
+    echo "WARNING: mlx-vlm install failed; OCR will use local CPU inference"
+
+# ModelScope SDK: downloads the MLX model from the China CDN (much faster
+# and more reliable than a direct HuggingFace connection in CN networks)
+echo "=== Installing ModelScope SDK (fast MLX model download) ==="
+uv pip install "modelscope>=1.25" || \
+    echo "WARNING: modelscope install failed; start.sh will fall back to HF"
+
 echo "=== Installing frontend dependencies with Bun ==="
 cd static && bun install && cd ..
 
@@ -50,7 +63,11 @@ echo ""
 echo "To activate the environment:"
 echo "  source .venv/bin/activate"
 echo ""
-echo "To run the web server:"
+echo "To run the web server (auto-starts MLX-VLM if installed):"
+echo "  ./start.sh"
+echo ""
+echo "Or start components manually:"
+echo "  .venv/bin/python -m mlx_vlm.server --port 8111 --model ~/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6 &   # optional, GPU acceleration"
 echo "  uv run python server.py"
 echo ""
 echo "To run the old Gradio app:"
@@ -58,8 +75,3 @@ echo "  uv run python app.py"
 echo ""
 echo "To build frontend assets:"
 echo "  cd static && bun run build"
-echo ""
-echo "Optional: For faster inference with MLX-VLM backend:"
-echo "  uv pip install 'mlx-vlm>=0.3.11'"
-echo "  mlx_vlm.server --port 8111 &"
-echo "  # Then update app.py to use vl_rec_backend='mlx-vlm-server'"

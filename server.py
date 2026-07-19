@@ -116,11 +116,21 @@ async def upload(request: Request):
 # ===========================================================================
 @app.get("/api/batches")
 def list_batches(request: Request):
-    """List all historical batches, optional status filter."""
+    """List all historical batches, optional status filter.
+
+    Batches still being processed carry a `progress` snapshot so the
+    frontend can restore percentage displays right after a page refresh.
+    """
     qp = request.query_params
     status = qp.get("status", None) if qp else None
     limit = int(qp.get("limit", "50")) if qp else 50
     batches = batch_manager.list_batches(limit=limit, status=status)
+    for b in batches:
+        if b["status"] == "processing":
+            try:
+                b["progress"] = batch_manager.get_batch_live_progress(b["batch_id"])
+            except Exception:
+                logger.exception("Failed to compute progress for %s", b["batch_id"])
     return jsonify(batches)
 
 
@@ -282,9 +292,10 @@ def export(request: Request):
             else:
                 path = exporter.export_batch_markdown(batch_id)
         elif fmt == "docx":
-            if not file_id:
-                return jsonify({"error": "file_id required for docx export"})
-            path = exporter.export_word(batch_id, file_id)
+            if file_id:
+                path = exporter.export_word(batch_id, file_id)
+            else:
+                path = exporter.export_batch_word(batch_id)
         else:
             return jsonify({"error": f"Unknown format: {fmt}"})
 
