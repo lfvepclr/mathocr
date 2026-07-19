@@ -18,6 +18,7 @@ Inference backend (Apple Silicon optimization):
 import base64
 import concurrent.futures
 import io
+import json
 import logging
 import os
 import threading
@@ -65,6 +66,21 @@ def _vlm_server_reachable(url: str, timeout: float = 0.8) -> bool:
     return False
 
 
+def _vlm_server_model_id(url: str, timeout: float = 2.0) -> str | None:
+    """Return the model id reported by the server's /v1/models endpoint."""
+    try:
+        with urllib.request.urlopen(
+            url.rstrip("/") + "/v1/models", timeout=timeout
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        items = data.get("data") or []
+        if items and isinstance(items[0], dict):
+            return items[0].get("id")
+    except Exception:
+        pass
+    return None
+
+
 def get_pipeline():
     """Return the global PaddleOCRVL pipeline, creating it on first call."""
     global _pipeline
@@ -94,11 +110,13 @@ def get_pipeline():
                     kwargs.update(
                         vl_rec_backend=vl_backend,
                         vl_rec_server_url=vl_server_url,
-                        # 服务端 /v1/models 报告的模型 id
-                        # (start.sh 从本地路径预加载, 其 id 即为此名)
-                        vl_rec_api_model_name=os.environ.get(
-                            "OCR_VL_REC_API_MODEL_NAME",
-                            "PaddlePaddle/PaddleOCR-VL-1.6",
+                        # 请求的模型 id 必须与服务端 /v1/models 报告的完全
+                        # 一致, 否则服务端会尝试按名字重新拉取模型(可能卡
+                        # 死)。因此默认自动探测服务端已加载模型的 id; 也可
+                        # 用 OCR_VL_REC_API_MODEL_NAME 显式覆盖。
+                        vl_rec_api_model_name=(
+                            os.environ.get("OCR_VL_REC_API_MODEL_NAME")
+                            or _vlm_server_model_id(vl_server_url)
                         ),
                         vl_rec_max_concurrency=int(
                             os.environ.get("OCR_VL_REC_MAX_CONCURRENCY", "4")

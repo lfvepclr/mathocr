@@ -3,6 +3,8 @@
 # PaddleOCR-VL 一键启动脚本
 # 功能: 检查/安装环境 → 安装依赖 → 构建前端 → 下载模型 → 启动服务 → 打开页面
 # 加速: 自动启动 MLX-VLM 推理服务 (Apple Silicon GPU), 未安装则回退 CPU 推理
+# 模型: 统一下载到项目内 models/ 目录 (snapshot 完整目录, 不依赖 ~/.cache),
+#       保证多台机器间路径结构一致, 避免模型 id 不一致问题
 # ============================================================
 set -e
 
@@ -124,10 +126,13 @@ echo -e "${GREEN}  ✓ 模型源: ModelScope${NC}"
 
 # Web 服务会自动探测 http://localhost:8111/ 的 MLX-VLM 服务
 # (见 ocr_engine.py), 探测到则用 Apple GPU 做 VLM 识别, 否则回退 CPU
-# MLX 模型本地目录 (从 ModelScope 下载, 国内 CDN 速度快; HF 直连易卡死)
-MLX_MODEL_DIR="${HOME}/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6"
+#
+# MLX 模型固定在项目内 models/ 目录 (从 ModelScope 下载, 国内 CDN 快;
+# HF 直连易卡死)。所有机器使用相同的目录结构, 避免模型版本/id 漂移。
+MLX_MODEL_DIR="${SCRIPT_DIR}/models/PaddleOCR-VL-1.6"
 MLX_MODEL=${OCR_VL_REC_API_MODEL_NAME:-$MLX_MODEL_DIR}
-# 客户端与服务端必须使用同一个模型 ID（本地路径），否则服务端会尝试从 HF 重新下载
+# 客户端与服务端必须使用同一个模型 ID, 否则服务端会尝试从 HF 重新下载。
+# (ocr_engine.py 另有自动探测服务端 /v1/models id 的兜底, 双保险)
 export OCR_VL_REC_API_MODEL_NAME="$MLX_MODEL"
 if .venv/bin/python -c "import mlx_vlm" 2>/dev/null; then
     if curl -s -m 2 "http://localhost:${MLX_PORT}/v1/models" | grep -q '"id"'; then
@@ -135,9 +140,16 @@ if .venv/bin/python -c "import mlx_vlm" 2>/dev/null; then
     else
         # 已运行但模型未加载(旧实例), 先停掉再以 --model 预加载方式重启
         if lsof -ti :"${MLX_PORT}" > /dev/null 2>&1; then
-            echo -e "${YELLOW}  检测到无模型的旧 MLX 服务实例, 正在重启...${NC}"
+            echo -e "${YELLOW}  检测到旧 MLX 服务实例, 正在重启...${NC}"
             lsof -ti :"${MLX_PORT}" | xargs kill 2>/dev/null || true
             sleep 1
+        fi
+        # 兼容旧布局: 模型在 ~/.cache 时迁移到项目 models/ 目录
+        OLD_MODEL_DIR="${HOME}/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6"
+        if [ ! -f "${MLX_MODEL_DIR}/model.safetensors" ] && [ -f "${OLD_MODEL_DIR}/model.safetensors" ]; then
+            echo -e "${YELLOW}  迁移已有模型: ${OLD_MODEL_DIR} -> ${MLX_MODEL_DIR}${NC}"
+            mkdir -p "$(dirname "${MLX_MODEL_DIR}")"
+            mv "${OLD_MODEL_DIR}" "${MLX_MODEL_DIR}"
         fi
         # 模型未下载时, 先从 ModelScope 下载 (~2GB, 国内 CDN)
         if [ ! -f "${MLX_MODEL_DIR}/model.safetensors" ]; then

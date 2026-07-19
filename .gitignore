@@ -27,5 +27,8 @@ Thumbs.db
 # PaddleOCR model cache
 .paddleocr/
 
+# MLX model files (~2GB, downloaded by start.sh)
+models/
+
 
 .venv/
