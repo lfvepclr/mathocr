@@ -1,0 +1,18 @@
+[project]
+name = "mathocr"
+version = "0.1.0"
+description = "PaddleOCR-VL-1.6 document parsing with Gradio web interface"
+requires-python = ">=3.10"
+dependencies = [
+    "gradio>=4.0",
+    "pillow>=10.0",
+]
+
+[tool.uv]
+# PaddlePaddle and PaddleOCR must be installed from custom indexes
+# See setup.sh for the full install commands
+index-url = "https://pypi.org/simple/"
+
+[tool.uv.sources]
+# Additional pip index for paddlepaddle CPU packages
+# Installed via: --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
