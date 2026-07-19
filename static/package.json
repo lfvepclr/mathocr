@@ -1,0 +1,13 @@
+{
+  "name": "mathocr-frontend",
+  "version": "1.0.0",
+  "description": "PaddleOCR document parsing frontend",
+  "scripts": {
+    "build": "bun build src/vendor.js --outfile dist/vendor.js --minify && cp node_modules/katex/dist/katex.min.css dist/katex.min.css",
+    "dev": "bun build src/vendor.js --outfile dist/vendor.js --watch"
+  },
+  "dependencies": {
+    "marked": "^15.0.0",
+    "katex": "^0.16.0"
+  }
+}

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PaddleOCR-VL 文档解析平台</title>
+  <!-- KaTeX CSS -->
+  <link rel="stylesheet" href="/static/dist/katex.min.css">
+  <!-- App CSS -->
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- ============ Sidebar ============ -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <button id="sidebar-toggle" class="sidebar-toggle" title="收起/展开侧边栏">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="9" y1="13" x2="15" y2="13"/>
+            <line x1="9" y1="17" x2="15" y2="17"/>
+          </svg>
+          <span>PaddleOCR</span>
+        </div>
+        <button id="new-parsing-btn" class="btn-primary">+ 新建解析</button>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-title">历史批次</div>
+        <div id="batch-list" class="batch-list">
+          <div class="loading-hint">加载中...</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============ Sidebar FAB (visible when sidebar collapsed) ============ -->
+    <div id="sidebar-fab" class="sidebar-fab" style="display:none">
+      <button id="fab-new" class="fab-btn fab-new" title="新建解析 (可拖拽文件到此处)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>新建</span>
+      </button>
+      <button id="fab-expand" class="fab-btn fab-expand" title="展开侧边栏">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
+    </div>
+
+    <!-- ============ Main Area ============ -->
+    <main id="main">
+
+      <!-- ====== Upload View ====== -->
+      <div id="upload-view" class="view active">
+        <div class="upload-container">
+          <div class="upload-hero">
+            <h1>PaddleOCR-VL-1.6</h1>
+            <p class="subtitle">文档智能解析平台 — 支持多格式、并行识别、置信度标注</p>
+          </div>
+          <div id="upload-zone" class="upload-zone">
+            <div class="upload-icon">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+            </div>
+            <p class="upload-text">点击上传或拖拽文件到此处开始解析</p>
+            <p class="upload-hint">支持 PDF / PNG / JPG / BMP / GIF / TIFF / WEBP 格式</p>
+            <p class="upload-hint">支持多文件同时上传，并行 OCR 识别</p>
+            <input type="file" id="file-input" multiple
+                   accept=".pdf,.png,.jpg,.jpeg,.bmp,.gif,.tiff,.tif,.webp"
+                   style="display:none">
+          </div>
+          <div id="upload-progress" class="upload-progress" style="display:none">
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <p id="progress-text" class="progress-text">处理中...</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====== Results View ====== -->
+      <div id="results-view" class="view">
+        <!-- Top Bar -->
+        <div id="top-bar" class="top-bar">
+          <div id="file-tabs" class="file-tabs"></div>
+          <div class="top-bar-controls">
+            <div id="page-nav" class="page-nav">
+              <button id="prev-page" class="btn-icon" title="上一页">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <span id="page-indicator">1 / 1</span>
+              <button id="next-page" class="btn-icon" title="下一页">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+            <div class="view-mode-toggle">
+              <button class="btn-toggle active" data-mode="split" title="对比视图">对比</button>
+              <button class="btn-toggle" data-mode="original" title="仅原图">原图</button>
+              <button class="btn-toggle" data-mode="markdown" title="仅结果">结果</button>
+            </div>
+            <button id="image-toggle" class="btn-icon" title="切换标注/原图">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            </button>
+            <div class="export-buttons">
+              <button id="export-md" class="btn-secondary" title="导出 Markdown">MD</button>
+              <button id="export-docx" class="btn-secondary" title="导出 Word">Word</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Split View -->
+        <div id="split-view" class="split-view">
+          <!-- Left Panel: Original / Annotated Image -->
+          <div id="left-panel" class="panel">
+            <div class="panel-header">
+              <span class="panel-title" id="left-panel-title">标注原图</span>
+              <div class="panel-controls">
+                <button id="zoom-in" class="btn-icon" title="放大">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                </button>
+                <button id="zoom-out" class="btn-icon" title="缩小">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+                </button>
+                <button id="zoom-reset" class="btn-icon" title="重置缩放">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 4 3 12 11 12"/></svg>
+                </button>
+                <button id="left-fullscreen" class="btn-icon" title="全屏">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="image-container" class="image-container">
+              <img id="page-image" src="" alt="页面图片" />
+            </div>
+          </div>
+
+          <!-- Right Panel: Markdown Output -->
+          <div id="right-panel" class="panel">
+            <div class="panel-header">
+              <span class="panel-title">解析结果</span>
+              <div class="panel-controls">
+                <button id="sync-scroll" class="btn-icon active" title="同步滚动">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 6H3M21 12H3M21 18H3"/></svg>
+                </button>
+                <button id="right-fullscreen" class="btn-icon" title="全屏">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="markdown-container" class="markdown-container">
+              <div id="markdown-content" class="markdown-content"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Confidence Legend -->
+        <div id="confidence-legend" class="confidence-legend">
+          <div class="legend-title">置信度图例</div>
+          <div class="legend-items">
+            <div class="legend-item"><span class="legend-color" style="background:#22c55e"></span>高 (≥90%)</div>
+            <div class="legend-item"><span class="legend-color" style="background:#3b82f6"></span>中高 (75-90%)</div>
+            <div class="legend-item"><span class="legend-color" style="background:#eab308"></span>中低 (60-75%)</div>
+            <div class="legend-item"><span class="legend-color" style="background:#ef4444"></span>低 (<60%)</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Fullscreen close button (dynamically positioned) -->
+  <button id="fullscreen-close" class="fullscreen-close" style="display:none">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+
+  <!-- Vendor JS (marked + katex) -->
+  <script src="/static/dist/vendor.js"></script>
+  <!-- App JS -->
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/sidebar.js"></script>
+  <script src="/static/js/upload.js"></script>
+  <script src="/static/js/viewer.js"></script>
+</body>
+</html>

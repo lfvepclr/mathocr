@@ -9,7 +9,12 @@ __pycache__/
 
 # Output files
 output/
+batches/
 *.md.tmp
+
+# Frontend
+static/node_modules/
+static/dist/
 
 # IDE
 .vscode/

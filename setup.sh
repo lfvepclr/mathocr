@@ -32,8 +32,17 @@ uv pip install paddlepaddle==3.2.1 \
 echo "=== Installing PaddleOCR with doc-parser support ==="
 uv pip install -U "paddleocr[doc-parser]"
 
+echo "=== Installing Robyn (Rust-based Python web framework) ==="
+uv pip install "robyn>=0.63"
+
 echo "=== Installing Gradio and other dependencies ==="
-uv pip install gradio>=4.0 pillow>=10.0
+uv pip install "gradio>=4.0" "pillow>=10.0"
+
+echo "=== Installing document export dependencies ==="
+uv pip install "python-docx>=1.1" "PyMuPDF>=1.24"
+
+echo "=== Installing frontend dependencies with Bun ==="
+cd static && bun install && cd ..
 
 echo ""
 echo "=== Setup complete! ==="
@@ -41,8 +50,14 @@ echo ""
 echo "To activate the environment:"
 echo "  source .venv/bin/activate"
 echo ""
-echo "To run the Gradio app:"
+echo "To run the web server:"
+echo "  uv run python server.py"
+echo ""
+echo "To run the old Gradio app:"
 echo "  uv run python app.py"
+echo ""
+echo "To build frontend assets:"
+echo "  cd static && bun run build"
 echo ""
 echo "Optional: For faster inference with MLX-VLM backend:"
 echo "  uv pip install 'mlx-vlm>=0.3.11'"
