@@ -441,8 +441,13 @@ if __name__ == "__main__":
     recovered = job_queue.recover_interrupted()
     if recovered:
         logger.info("Recovered %d interrupted batch(es) — processing resumed", recovered)
+
     job_queue.start()
-    logger.info("Job queue worker started")
+    queue_size = job_queue.get_queue_size()
+    if queue_size > 0:
+        logger.info("Job queue worker started — %d batch(es) queued, processing begins", queue_size)
+    else:
+        logger.info("Job queue worker started — queue is empty, waiting for uploads")
 
     # Open browser after a short delay
     if args.open_browser:
