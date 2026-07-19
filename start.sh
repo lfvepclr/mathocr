@@ -18,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 MLX_PORT=${MLX_PORT:-8111}
+MLX_STARTED_BY_US=0
 
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════╗"
@@ -151,11 +152,26 @@ print('模型目录:', p)
         nohup .venv/bin/python -m mlx_vlm.server --port "${MLX_PORT}" \
             --model "${MLX_MODEL}" \
             > /tmp/mlx_vlm_server.log 2>&1 &
+        MLX_PID=$!
+        MLX_STARTED_BY_US=1
         echo -e "${GREEN}  ✓ MLX-VLM 服务启动中 (pid $!)${NC}"
     fi
 else
     echo -e "${YELLOW}  跳过 MLX-VLM 服务 (未安装), OCR 使用本地 CPU 推理${NC}"
 fi
+
+# ============================================================
+# 清理函数: 脚本退出时关闭由本脚本启动的后台服务
+# ============================================================
+cleanup() {
+    if [ "$MLX_STARTED_BY_US" -eq 1 ]; then
+        echo -e "\n${YELLOW}正在关闭 MLX-VLM 推理服务 (pid ${MLX_PID})...${NC}"
+        kill "$MLX_PID" 2>/dev/null || true
+        wait "$MLX_PID" 2>/dev/null || true
+        echo -e "${GREEN}  ✓ MLX-VLM 服务已关闭${NC}"
+    fi
+}
+trap cleanup EXIT
 
 # ============================================================
 # Step 8: 启动服务器

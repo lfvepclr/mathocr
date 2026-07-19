@@ -22,8 +22,23 @@ import logging
 import os
 import threading
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any
+
+# Suppress warnings about min_pixels/max_pixels not supported by MLX-VLM server.
+# PaddleX internally sets default min_pixels=112896 even when these params are
+# left as None, and the GenAI client predictor warns for non-vllm backends.
+warnings.filterwarnings(
+    "ignore",
+    message=".*does not support `min_pixels`.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*does not support `max_pixels`.*",
+    category=UserWarning,
+)
 
 # Use ModelScope as default model source for better availability
 os.environ.setdefault("PADDLE_PDX_LOCAL_MODEL_SOURCE", "ModelScope")

@@ -472,15 +472,22 @@ def reset_interrupted_tasks() -> int:
     with _db_lock:
         db = _get_db()
         cur = db.execute(
-            "UPDATE batches SET status = 'queued' WHERE status = 'processing'"
+            "UPDATE batches SET status = 'queued', processing_time = 0 "
+            "WHERE status = 'processing'"
         )
         recovered = cur.rowcount
+        # Reset files that were mid-processing: clear total_pages so the
+        # resume guard in _process_single_file doesn't see stale values.
         db.execute(
-            "UPDATE files SET status = 'pending' WHERE status = 'processing'"
+            "UPDATE files SET status = 'pending', total_pages = 0, "
+            "page_count = 0, processing_time = 0 "
+            "WHERE status = 'processing'"
         )
         db.commit()
     if recovered:
         logger.info("Recovered %d interrupted batch(es), re-queued", recovered)
+    else:
+        logger.info("No interrupted batches to recover")
     return recovered
 
 
@@ -630,6 +637,7 @@ def _process_single_file(batch_id: str, file_info: dict):
     original_name = file_info["original_name"]
 
     update_file_status(batch_id, file_id, "processing")
+    logger.info("Processing file %s (%s) in batch %s", original_name, file_id, batch_id)
     event_bus.publish(batch_id, "file_started", {"file_id": file_id, "original_name": original_name})
 
     file_path = get_uploads_dir(batch_id) / original_name
@@ -665,6 +673,8 @@ def _process_single_file(batch_id: str, file_info: dict):
     # Step 2+3: Stream OCR — persist each page as soon as it is ready,
     # publishing per-page progress events along the way.
     avg_page_time = get_avg_page_time()
+    logger.info("Starting OCR for %s (%d pages) — this may take a while on first run",
+                original_name, total_pages)
     event_bus.publish(batch_id, "page_started", {
         "file_id": file_id, "page_id": 0,
         "total_pages": total_pages, "avg_page_time": round(avg_page_time, 1),
@@ -681,6 +691,8 @@ def _process_single_file(batch_id: str, file_info: dict):
                              total_pages, completed_pages,
                              infer_time=infer_time)
         completed_pages += 1
+        logger.info("Page %d/%d completed for %s (%.1fs)",
+                    completed_pages, total_pages, original_name, infer_time)
         infer_start = time.time()
         # Announce that the next page is now being inferred
         if page_idx + 1 < total_pages:
