@@ -3,6 +3,8 @@
 # PaddleOCR-VL 一键启动脚本
 # 功能: 检查/安装环境 → 安装依赖 → 构建前端 → 下载模型 → 启动服务 → 打开页面
 # 加速: 自动启动 MLX-VLM 推理服务 (Apple Silicon GPU), 未安装则回退 CPU 推理
+# 模型: 统一下载到项目内 models/ 目录 (snapshot 完整目录, 不依赖 ~/.cache),
+#       保证多台机器间路径结构一致, 避免模型 id 不一致问题
 # ============================================================
 set -e
 
@@ -18,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 MLX_PORT=${MLX_PORT:-8111}
+MLX_STARTED_BY_US=0
 
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════╗"
@@ -89,11 +92,13 @@ echo -e "${GREEN}  ✓ Python 依赖安装完成${NC}"
 # Step 5: MLX-VLM 推理后端 (Apple Silicon GPU 加速, 可选)
 # ============================================================
 echo -e "${BLUE}[5/8] 检查 MLX-VLM 推理后端 (Apple Silicon 加速)...${NC}"
-if .venv/bin/python -c "import mlx_vlm" 2>/dev/null; then
-    echo -e "${GREEN}  ✓ mlx-vlm 已安装${NC}"
+# 版本固定, 避免不同机器间版本漂移导致行为差异 (如模型 id 报告格式)
+MLX_VLM_VERSION="0.6.5"
+if .venv/bin/python -c "import mlx_vlm, sys; sys.exit(0 if mlx_vlm.__version__ == '${MLX_VLM_VERSION}' else 1)" 2>/dev/null; then
+    echo -e "${GREEN}  ✓ mlx-vlm ${MLX_VLM_VERSION} 已安装${NC}"
 else
-    echo -e "${YELLOW}  安装 mlx-vlm (用于 Apple GPU 推理加速)...${NC}"
-    if uv pip install "mlx-vlm>=0.3.11"; then
+    echo -e "${YELLOW}  安装 mlx-vlm==${MLX_VLM_VERSION} (用于 Apple GPU 推理加速)...${NC}"
+    if uv pip install "mlx-vlm==${MLX_VLM_VERSION}"; then
         echo -e "${GREEN}  ✓ mlx-vlm 安装完成${NC}"
     else
         echo -e "${YELLOW}  ⚠ mlx-vlm 安装失败, 将使用本地 CPU 推理 (速度较慢)${NC}"
@@ -123,18 +128,31 @@ echo -e "${GREEN}  ✓ 模型源: ModelScope${NC}"
 
 # Web 服务会自动探测 http://localhost:8111/ 的 MLX-VLM 服务
 # (见 ocr_engine.py), 探测到则用 Apple GPU 做 VLM 识别, 否则回退 CPU
-# MLX 模型本地目录 (从 ModelScope 下载, 国内 CDN 速度快; HF 直连易卡死)
-MLX_MODEL_DIR="${HOME}/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6"
+#
+# MLX 模型固定在项目内 models/ 目录 (从 ModelScope 下载, 国内 CDN 快;
+# HF 直连易卡死)。所有机器使用相同的目录结构, 避免模型版本/id 漂移。
+MLX_MODEL_DIR="${SCRIPT_DIR}/models/PaddleOCR-VL-1.6"
 MLX_MODEL=${OCR_VL_REC_API_MODEL_NAME:-$MLX_MODEL_DIR}
+# 注意: 不再静态 export OCR_VL_REC_API_MODEL_NAME——web 端 ocr_engine.py
+# 会自动探测服务端 /v1/models 报告的实际模型 id, 任何启动方式下都能保持
+# 一致; 静态 export 一旦与服务端实际加载的模型不符, 反而会触发服务端按名
+# 字重新拉取模型(HF 直连易卡死)。
 if .venv/bin/python -c "import mlx_vlm" 2>/dev/null; then
     if curl -s -m 2 "http://localhost:${MLX_PORT}/v1/models" | grep -q '"id"'; then
         echo -e "${GREEN}  ✓ MLX-VLM 服务已在 :${MLX_PORT} 运行 (模型已加载)${NC}"
     else
         # 已运行但模型未加载(旧实例), 先停掉再以 --model 预加载方式重启
         if lsof -ti :"${MLX_PORT}" > /dev/null 2>&1; then
-            echo -e "${YELLOW}  检测到无模型的旧 MLX 服务实例, 正在重启...${NC}"
+            echo -e "${YELLOW}  检测到旧 MLX 服务实例, 正在重启...${NC}"
             lsof -ti :"${MLX_PORT}" | xargs kill 2>/dev/null || true
             sleep 1
+        fi
+        # 兼容旧布局: 模型在 ~/.cache 时迁移到项目 models/ 目录
+        OLD_MODEL_DIR="${HOME}/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6"
+        if [ ! -f "${MLX_MODEL_DIR}/model.safetensors" ] && [ -f "${OLD_MODEL_DIR}/model.safetensors" ]; then
+            echo -e "${YELLOW}  迁移已有模型: ${OLD_MODEL_DIR} -> ${MLX_MODEL_DIR}${NC}"
+            mkdir -p "$(dirname "${MLX_MODEL_DIR}")"
+            mv "${OLD_MODEL_DIR}" "${MLX_MODEL_DIR}"
         fi
         # 模型未下载时, 先从 ModelScope 下载 (~2GB, 国内 CDN)
         if [ ! -f "${MLX_MODEL_DIR}/model.safetensors" ]; then
@@ -151,11 +169,26 @@ print('模型目录:', p)
         nohup .venv/bin/python -m mlx_vlm.server --port "${MLX_PORT}" \
             --model "${MLX_MODEL}" \
             > /tmp/mlx_vlm_server.log 2>&1 &
+        MLX_PID=$!
+        MLX_STARTED_BY_US=1
         echo -e "${GREEN}  ✓ MLX-VLM 服务启动中 (pid $!)${NC}"
     fi
 else
     echo -e "${YELLOW}  跳过 MLX-VLM 服务 (未安装), OCR 使用本地 CPU 推理${NC}"
 fi
+
+# ============================================================
+# 清理函数: 脚本退出时关闭由本脚本启动的后台服务
+# ============================================================
+cleanup() {
+    if [ "$MLX_STARTED_BY_US" -eq 1 ]; then
+        echo -e "\n${YELLOW}正在关闭 MLX-VLM 推理服务 (pid ${MLX_PID})...${NC}"
+        kill "$MLX_PID" 2>/dev/null || true
+        wait "$MLX_PID" 2>/dev/null || true
+        echo -e "${GREEN}  ✓ MLX-VLM 服务已关闭${NC}"
+    fi
+}
+trap cleanup EXIT
 
 # ============================================================
 # Step 8: 启动服务器

@@ -18,12 +18,28 @@ Inference backend (Apple Silicon optimization):
 import base64
 import concurrent.futures
 import io
+import json
 import logging
 import os
 import threading
 import urllib.request
+import warnings
 from pathlib import Path
 from typing import Any
+
+# Suppress warnings about min_pixels/max_pixels not supported by MLX-VLM server.
+# PaddleX internally sets default min_pixels=112896 even when these params are
+# left as None, and the GenAI client predictor warns for non-vllm backends.
+warnings.filterwarnings(
+    "ignore",
+    message=".*does not support `min_pixels`.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*does not support `max_pixels`.*",
+    category=UserWarning,
+)
 
 # Use ModelScope as default model source for better availability
 os.environ.setdefault("PADDLE_PDX_LOCAL_MODEL_SOURCE", "ModelScope")
@@ -48,6 +64,21 @@ def _vlm_server_reachable(url: str, timeout: float = 0.8) -> bool:
         except Exception:
             continue
     return False
+
+
+def _vlm_server_model_id(url: str, timeout: float = 2.0) -> str | None:
+    """Return the model id reported by the server's /v1/models endpoint."""
+    try:
+        with urllib.request.urlopen(
+            url.rstrip("/") + "/v1/models", timeout=timeout
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        items = data.get("data") or []
+        if items and isinstance(items[0], dict):
+            return items[0].get("id")
+    except Exception:
+        pass
+    return None
 
 
 def get_pipeline():
@@ -79,20 +110,31 @@ def get_pipeline():
                     kwargs.update(
                         vl_rec_backend=vl_backend,
                         vl_rec_server_url=vl_server_url,
-                        # 服务端 /v1/models 报告的模型 id
-                        # (start.sh 从本地路径预加载, 其 id 即为此名)
-                        vl_rec_api_model_name=os.environ.get(
-                            "OCR_VL_REC_API_MODEL_NAME",
-                            "PaddlePaddle/PaddleOCR-VL-1.6",
+                        # 请求的模型 id 必须与服务端 /v1/models 报告的完全
+                        # 一致, 否则服务端会尝试按名字重新拉取模型(可能卡
+                        # 死)。因此默认自动探测服务端已加载模型的 id; 也可
+                        # 用 OCR_VL_REC_API_MODEL_NAME 显式覆盖。
+                        vl_rec_api_model_name=(
+                            os.environ.get("OCR_VL_REC_API_MODEL_NAME")
+                            or _vlm_server_model_id(vl_server_url)
                         ),
                         vl_rec_max_concurrency=int(
                             os.environ.get("OCR_VL_REC_MAX_CONCURRENCY", "4")
                         ),
                     )
-                    logger.info(
-                        "Initializing PaddleOCRVL with VLM server backend "
-                        "'%s' at %s …", vl_backend, vl_server_url,
-                    )
+                    model_id = kwargs["vl_rec_api_model_name"]
+                    if model_id:
+                        logger.info(
+                            "Initializing PaddleOCRVL with VLM server backend "
+                            "'%s' at %s, model id: %s",
+                            vl_backend, vl_server_url, model_id,
+                        )
+                    else:
+                        logger.warning(
+                            "Could not probe the model id from %s; paddlex "
+                            "will resolve it lazily on first request.",
+                            vl_server_url,
+                        )
                 else:
                     logger.info(
                         "Initializing PaddleOCRVL pipeline (local CPU mode). "
