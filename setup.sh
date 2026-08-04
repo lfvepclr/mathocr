@@ -32,14 +32,9 @@ uv pip install paddlepaddle==3.2.1 \
 echo "=== Installing PaddleOCR with doc-parser support ==="
 uv pip install -U "paddleocr[doc-parser]"
 
-echo "=== Installing Robyn (Rust-based Python web framework) ==="
-uv pip install "robyn>=0.63"
-
-echo "=== Installing Gradio and other dependencies ==="
-uv pip install "gradio>=4.0" "pillow>=10.0"
-
-echo "=== Installing document export dependencies ==="
-uv pip install "python-docx>=1.1" "PyMuPDF>=1.24"
+echo "=== Installing Web/export dependencies (declared in pyproject.toml) ==="
+# robyn/pillow/python-docx/PyMuPDF 集中在 pyproject.toml 声明, 由 uv 统一安装
+uv pip install -r pyproject.toml
 
 # Apple Silicon acceleration: MLX-VLM serves the VLM recognition model on the
 # Apple GPU (much faster than local CPU inference). The web server auto-detects
@@ -55,7 +50,7 @@ uv pip install "modelscope>=1.25" || \
     echo "WARNING: modelscope install failed; start.sh will fall back to HF"
 
 echo "=== Installing frontend dependencies with Bun ==="
-cd static && bun install && cd ..
+cd web && bun install && bun run build && cd ..
 
 echo ""
 echo "=== Setup complete! ==="
@@ -68,10 +63,7 @@ echo "  ./start.sh"
 echo ""
 echo "Or start components manually:"
 echo "  .venv/bin/python -m mlx_vlm.server --port 8111 --model ~/.cache/mlx_models/PaddlePaddle/PaddleOCR-VL-1.6 &   # optional, GPU acceleration"
-echo "  uv run python server.py"
-echo ""
-echo "To run the old Gradio app:"
-echo "  uv run python app.py"
+echo "  .venv/bin/python server.py"
 echo ""
 echo "To build frontend assets:"
-echo "  cd static && bun run build"
+echo "  cd web && bun run build"

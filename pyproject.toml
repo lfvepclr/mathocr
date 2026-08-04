@@ -1,10 +1,9 @@
 [project]
 name = "mathocr"
 version = "0.1.0"
-description = "PaddleOCR-VL-1.6 document parsing with Gradio web interface"
-requires-python = ">=3.10"
+description = "PaddleOCR-VL document parsing platform (Robyn web server)"
+requires-python = ">=3.13,<3.14"
 dependencies = [
-    "gradio>=4.0",
     "pillow>=10.0",
     "robyn>=0.63",
     "python-docx>=1.1",
@@ -13,9 +12,30 @@ dependencies = [
 
 [tool.uv]
 # PaddlePaddle and PaddleOCR must be installed from custom indexes
-# See setup.sh for the full install commands
+# See start.sh for the full install commands (paddlepaddle has no cp314 wheel,
+# so Python is pinned to 3.13 until paddle ships cp314).
 index-url = "https://pypi.org/simple/"
 
-[tool.uv.sources]
-# Additional pip index for paddlepaddle CPU packages
-# Installed via: --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
+# Dev-only tools. Run via `uvx ruff ...` / `uvx ty ...` — never `uv sync` or
+# `uv add` (both would remove the undeclared paddlepaddle from .venv).
+[dependency-groups]
+dev = [
+    "ruff>=0.16",
+    "ty>=0.0.65",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = ["backup", "batches", "testset", ".venv"]
+
+[tool.ruff.lint]
+# DTZ005: timestamps are local-time by design (single-machine local tool).
+ignore = ["DTZ005"]
+
+[tool.ty.src]
+include = ["app", "server.py", "tests"]
+exclude = ["backup", "batches", "testset"]
+
+[tool.ty.environment]
+python-version = "3.13"

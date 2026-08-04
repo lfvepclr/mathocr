@@ -82,9 +82,9 @@ if ! uv pip list 2>/dev/null | grep -qi "paddleocr"; then
     uv pip install -U "paddleocr[doc-parser]"
 fi
 
-# 其他依赖
+# 其他依赖 (声明在 pyproject.toml, paddlepaddle/paddleocr 走上面的自定义索引)
 echo -e "${YELLOW}  安装 Web/导出/数据库依赖...${NC}"
-uv pip install "robyn>=0.63" "pillow>=10.0" "python-docx>=1.1" "PyMuPDF>=1.24"
+uv pip install -r pyproject.toml
 
 echo -e "${GREEN}  ✓ Python 依赖安装完成${NC}"
 
@@ -109,12 +109,12 @@ fi
 # Step 6: 安装并构建前端
 # ============================================================
 echo -e "${BLUE}[6/8] 构建前端资源...${NC}"
-cd static
+cd web
 if [ ! -d "node_modules" ]; then
-    echo -e "${YELLOW}  安装前端依赖...${NC}"
+    echo -e "${YELLOW}  安装前端依赖 (React + Vite)...${NC}"
     bun install
 fi
-echo -e "${YELLOW}  构建前端 bundle...${NC}"
+echo -e "${YELLOW}  构建前端 (Vite → static/)...${NC}"
 bun run build
 cd "$SCRIPT_DIR"
 echo -e "${GREEN}  ✓ 前端构建完成${NC}"
