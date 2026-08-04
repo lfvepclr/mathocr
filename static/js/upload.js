@@ -104,7 +104,10 @@ const Uploader = {
       progressFill.style.width = '30%';
       progressText.textContent = '上传完成,等待解析...';
 
-      const resp = await fetch('/api/upload', {
+      // Engine travels as a query param: Robyn's multipart parsing only
+      // surfaces file fields, so it cannot be sent inside the FormData.
+      const engine = (typeof Settings !== 'undefined' && Settings.selected) || 'local';
+      const resp = await fetch(`/api/upload?engine=${encodeURIComponent(engine)}`, {
         method: 'POST',
         body: formData,
       });
@@ -410,13 +413,45 @@ const QueuePanel = {
       </div>
       <div class="task-card-progress">${text}</div>
       ${elapsedHtml}
+      ${this.renderEngineMeta(b)}
       <div class="file-progress-bar"><div class="file-progress-fill task-card-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  },
+
+  // Engine badge + running cost, only meaningful for the online engines
+  renderEngineMeta(b) {
+    const engineId = b.engine || 'local';
+    if (engineId === 'local') return '';
+    const name = typeof Settings !== 'undefined'
+      ? Settings.engineName(engineId) : engineId;
+    const cost = typeof Settings !== 'undefined'
+      ? Settings.formatCost(b.cost) : `¥${Number(b.cost || 0).toFixed(4)}`;
+    return `<div class="task-card-engine">
+      <span class="engine-badge online">${name}</span>
+      <span class="engine-cost task-card-cost">${b.api_calls || 0} 次 · ${cost}</span>
     </div>`;
   },
 
   handleEvent(type, data) {
     const batchId = data.batch_id;
     if (!batchId) return;
+
+    if (type === 'cost_estimated') {
+      return;  // handled by Settings (upload-area estimate line)
+    }
+
+    if (type === 'usage_recorded') {
+      // Live cost on the queue card, without a full list rebuild
+      const el = document.querySelector(
+        `.task-card[data-batch-id="${batchId}"] .task-card-cost`);
+      const totals = data.batch_totals || {};
+      if (el && totals.cost !== undefined) {
+        const cost = typeof Settings !== 'undefined'
+          ? Settings.formatCost(totals.cost) : `¥${Number(totals.cost).toFixed(4)}`;
+        el.textContent = `${totals.api_calls || 0} 次 · ${cost}`;
+      }
+      return;
+    }
 
     if (type === 'batch_queued') {
       this.refresh();

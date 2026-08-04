@@ -33,7 +33,16 @@ const Sidebar = {
         if (!activeIds.has(id)) delete this.batchProgress[id];
       });
 
-      container.innerHTML = batches.map(b => this.renderBatchItem(b)).join('');
+      // Group by local calendar day (created_at is UTC): insert a small
+      // group header whenever the label changes between adjacent batches
+      let lastGroup = '';
+      container.innerHTML = batches.map(b => {
+        const g = this.batchGroupLabel(b.created_at);
+        const header = g !== lastGroup
+          ? `<div class="batch-group-title">${g}</div>` : '';
+        lastGroup = g;
+        return header + this.renderBatchItem(b);
+      }).join('');
 
       container.querySelectorAll('.batch-item-header').forEach(header => {
         header.addEventListener('click', (e) => {
@@ -45,6 +54,14 @@ const Sidebar = {
             App.openBatch(batchId);
           } else {
             this.expandBatch(item, batchId);
+            // A finished batch opens straight to its first result on the
+            // first click; active batches only expand (file rows carry
+            // live progress, there is nothing to show yet)
+            const done = item.querySelector('.batch-status')
+              ?.classList.contains('completed');
+            if (done && parseInt(item.dataset.fileCount || '0', 10) > 0) {
+              App.openBatch(batchId);
+            }
           }
         });
       });
@@ -87,6 +104,22 @@ const Sidebar = {
       container.innerHTML = '<div class="loading-hint">加载失败</div>';
       console.error('Failed to load batches:', err);
     }
+  },
+
+  // Time group label for the history list. created_at is SQLite UTC
+  // ("YYYY-MM-DD HH:MM:SS") — compare against local day boundaries.
+  batchGroupLabel(createdAt) {
+    const ms = createdAt
+      ? Date.parse(createdAt.replace(' ', 'T') + 'Z') : NaN;
+    if (isNaN(ms)) return '更早';
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    if (ms >= dayStart.getTime()) return '今天';
+    const days = Math.floor((dayStart.getTime() - ms) / 86400000) + 1;
+    if (days === 1) return '昨天';
+    if (days < 7) return '近 7 天';
+    if (days < 30) return '近 30 天';
+    return '更早';
   },
 
   renderBatchItem(batch) {
@@ -149,7 +182,7 @@ const Sidebar = {
           <div style="flex:1; min-width:0;">
             <div class="batch-item-name">${displayName}</div>
             <div class="batch-item-meta">
-              ${App.formatTime(batch.created_at)} · ${batch.file_count} 个文件
+              ${App.formatTime(batch.created_at)} · ${batch.file_count} 个文件${this.engineMeta(batch)}
             </div>
             ${batch.processing_time ? `<div class="batch-time-info">${timeInfo}</div>` : ''}
           </div>
@@ -169,6 +202,20 @@ const Sidebar = {
         <div class="batch-files"></div>
       </div>
     `;
+  },
+
+  // Engine + cost suffix for the batch meta line. Local batches stay clean:
+  // there is nothing to report when nothing was billed.
+  engineMeta(batch) {
+    const engineId = batch.engine || 'local';
+    if (engineId === 'local') return '';
+    const name = typeof Settings !== 'undefined'
+      ? Settings.engineName(engineId) : engineId;
+    const cost = Number(batch.cost || 0);
+    const costText = cost > 0
+      ? ` · ${typeof Settings !== 'undefined' ? Settings.formatCost(cost) : '¥' + cost.toFixed(4)}`
+      : '';
+    return ` · <span class="engine-badge online tiny">${name}</span>${costText}`;
   },
 
   async expandBatch(item, batchId) {

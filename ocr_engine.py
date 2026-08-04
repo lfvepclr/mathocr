@@ -1,8 +1,15 @@
 """
-PaddleOCR-VL-1.6 OCR Engine with parallel processing support.
+OCR engine dispatcher + local PaddleOCR-VL-1.6 implementation.
 
-Provides a singleton pipeline, single-document processing, and
-parallel batch processing using ThreadPoolExecutor.
+`process_document_iter()` is the single entry point used by batch_manager.
+It routes to one of the registered engines:
+
+  local        this module's PaddleOCR-VL pipeline (full layout parsing)
+  siliconflow  engine_siliconflow — remote Spotting on rendered pages
+  baidu        engine_baidu — remote async whole-document parsing
+
+Remote engine modules are imported lazily so that selecting a remote
+engine never triggers PaddlePaddle initialisation.
 
 Inference backend (Apple Silicon optimization):
   - If a VLM inference server is reachable (default http://localhost:8111/),
@@ -206,9 +213,9 @@ def _build_page_result(res) -> dict[str, Any]:
     }
 
 
-def process_document_iter(file_path: str):
+def _local_process_document_iter(file_path: str):
     """
-    Stream-process a document (image or PDF) with PaddleOCR-VL.
+    Stream-process a document (image or PDF) with the local PaddleOCR-VL.
 
     Uses the pipeline's generator interface so each page is yielded
     as soon as its inference finishes — callers can persist and
@@ -224,9 +231,73 @@ def process_document_iter(file_path: str):
         yield idx, _build_page_result(res)
 
 
-def process_document(file_path: str) -> list[dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Engine dispatch
+# ---------------------------------------------------------------------------
+def process_document_iter(
+    file_path: str,
+    *,
+    engine: str = "local",
+    page_images: list[str] | None = None,
+    on_usage=None,
+):
     """
-    Process a single document (image or PDF) with PaddleOCR-VL.
+    Stream-process a document with the requested engine.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the uploaded document (image or PDF).
+    engine : str
+        Engine id: "local", "siliconflow" or "baidu".
+    page_images : list[str] | None
+        Pre-rendered page images. Required by page-based remote engines,
+        which must not upload the raw (possibly huge) source document.
+    on_usage : callable | None
+        Called as on_usage(page_id=None, calls=0, prompt_tokens=0,
+        completion_tokens=0, billed_pages=0) for API accounting.
+
+    Yields
+    ------
+    tuple[int, dict]
+        (page_index, page_result) for each page, in order.
+    """
+    import engine_registry
+
+    if engine == engine_registry.LOCAL:
+        if not engine_registry.local_runtime_available():
+            raise RuntimeError(
+                "本地引擎不可用:未安装 paddleocr/paddle,"
+                "请改用在线引擎或使用 start.sh 完整安装"
+            )
+        yield from _local_process_document_iter(file_path)
+        return
+
+    cfg = engine_registry.get_config(engine)
+
+    if engine == engine_registry.SILICONFLOW:
+        import engine_siliconflow
+
+        if not page_images:
+            raise ValueError("siliconflow engine requires rendered page_images")
+        yield from engine_siliconflow.process_pages_iter(
+            page_images, cfg, on_usage
+        )
+        return
+
+    if engine == engine_registry.BAIDU:
+        import engine_baidu
+
+        yield from engine_baidu.process_file_iter(file_path, cfg, on_usage)
+        return
+
+    raise ValueError(f"Unknown OCR engine: {engine}")
+
+
+def process_document(file_path: str, *, engine: str = "local",
+                     page_images: list[str] | None = None) -> list[dict[str, Any]]:
+    """
+    Process a single document (image or PDF).
 
     Returns a list of page results, each containing:
         - markdown_text: str
@@ -234,7 +305,11 @@ def process_document(file_path: str) -> list[dict[str, Any]]:
         - images: dict[str, PIL.Image]  (extracted images)
         - page_data: dict (parsed parsing_res_list, boxes, width, height)
     """
-    return [page for _, page in process_document_iter(file_path)]
+    return [
+        page for _, page in process_document_iter(
+            file_path, engine=engine, page_images=page_images
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------

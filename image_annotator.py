@@ -1,12 +1,16 @@
 """
-Image annotation module — draws bounding boxes with confidence color coding
-on original page images.
+Image annotation module — draws bounding boxes on original page images.
 
-Color scheme:
+Two colouring modes, chosen automatically per page:
+
+  confidence mode (boxes carry a `score`, i.e. the local pipeline)
     score >= 0.90  → green   #22c55e  (high confidence)
     0.75 – 0.90    → blue    #3b82f6  (medium-high)
     0.60 – 0.75    → yellow  #eab308  (medium-low)
     score < 0.60   → red     #ef4444  (low, needs review)
+
+  label mode (no box has a `score`, i.e. the remote engines, which do not
+  report confidence) — colour encodes the block type instead.
 """
 
 import logging
@@ -29,6 +33,43 @@ FILL_ALPHA = 60  # 0-255, semi-transparent fill
 BORDER_WIDTH = 3
 LABEL_FONT_SIZE = 13
 
+# Block label → (rgb, display name). Used when the engine reports no score.
+LABEL_COLORS: dict[str, tuple[tuple[int, int, int], str]] = {
+    "text": ((59, 130, 246), "正文"),
+    "aside_text": ((59, 130, 246), "旁注"),
+    "vertical_text": ((59, 130, 246), "竖排文本"),
+    "doc_title": ((139, 92, 246), "文档标题"),
+    "paragraph_title": ((139, 92, 246), "标题"),
+    "table": ((249, 115, 22), "表格"),
+    "formula": ((6, 182, 212), "公式"),
+    "inline_formula": ((6, 182, 212), "行内公式"),
+    "formula_number": ((6, 182, 212), "公式编号"),
+    "image": ((34, 197, 94), "图片"),
+    "chart": ((34, 197, 94), "图表"),
+    "header_image": ((34, 197, 94), "页眉图片"),
+    "footer_image": ((34, 197, 94), "页脚图片"),
+    "seal": ((239, 68, 68), "印章"),
+    "figure_title": ((16, 185, 129), "图题"),
+    "table_title": ((16, 185, 129), "表题"),
+    "header": ((100, 116, 139), "页眉"),
+    "footer": ((100, 116, 139), "页脚"),
+    "number": ((100, 116, 139), "页码"),
+}
+_OTHER_LABEL_COLOR = ((148, 163, 184), "其他")
+
+# Legend groups: several block labels share a colour, so the legend shows one
+# combined row per colour rather than one row per label.
+_LABEL_LEGEND_GROUPS = [
+    ("正文", "text"),
+    ("标题", "paragraph_title"),
+    ("表格", "table"),
+    ("公式", "formula"),
+    ("图片/图表", "image"),
+    ("印章", "seal"),
+    ("图题/表题", "figure_title"),
+    ("页眉/页脚", "header"),
+]
+
 
 def get_confidence_color(score: float) -> tuple[tuple[int, int, int], str]:
     """Return (rgb, level_label) for a given confidence score."""
@@ -36,6 +77,11 @@ def get_confidence_color(score: float) -> tuple[tuple[int, int, int], str]:
         if score >= threshold:
             return color, label
     return CONFIDENCE_LEVELS[-1][0], CONFIDENCE_LEVELS[-1][2]
+
+
+def get_label_color(label: str) -> tuple[tuple[int, int, int], str]:
+    """Return (rgb, display_name) for a block label."""
+    return LABEL_COLORS.get(label, _OTHER_LABEL_COLOR)
 
 
 def _get_font(size: int = LABEL_FONT_SIZE) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -106,8 +152,11 @@ def annotate_image(
         scale_x = scale_y = 1.0
 
     boxes = page_data.get("boxes", [])
+    # Remote engines report no confidence; fall back to per-type colours
+    # rather than painting everything as if it were low-confidence.
+    score_mode = any("score" in box for box in boxes)
+
     for box in boxes:
-        score = box.get("score", 0.0)
         label = box.get("label", "unknown")
         coord = box.get("coordinate", box.get("bbox", []))
 
@@ -130,7 +179,13 @@ def annotate_image(
         if x2 <= x1 or y2 <= y1:
             continue
 
-        color_rgb, level_label = get_confidence_color(score)
+        if score_mode:
+            score = box.get("score", 0.0)
+            color_rgb, _level_label = get_confidence_color(score)
+            text = f"{label} {score:.2f}"
+        else:
+            color_rgb, display_name = get_label_color(label)
+            text = display_name
 
         # Semi-transparent fill
         fill_rgba = color_rgb + (FILL_ALPHA,)
@@ -139,8 +194,6 @@ def annotate_image(
         # Solid border
         label_draw.rectangle([x1, y1, x2, y2], outline=color_rgb + (255,), width=BORDER_WIDTH)
 
-        # Label text: "type score"
-        text = f"{label} {score:.2f}"
         try:
             bbox = label_draw.textbbox((0, 0), text, font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -165,13 +218,33 @@ def annotate_image(
     return str(output_path)
 
 
-def generate_legend() -> dict:
-    """Return legend data for frontend display."""
+def generate_legend(mode: str = "score") -> dict:
+    """Return legend data for frontend display.
+
+    mode="score" — confidence bands (local engine)
+    mode="label" — block types (remote engines, which report no confidence)
+    """
+    if mode == "label":
+        levels = []
+        for name, block_label in _LABEL_LEGEND_GROUPS:
+            rgb, _ = get_label_color(block_label)
+            levels.append({
+                "label": name,
+                "color": "#%02x%02x%02x" % rgb,
+                "block_label": block_label,
+            })
+        rgb, name = _OTHER_LABEL_COLOR
+        levels.append({
+            "label": name, "color": "#%02x%02x%02x" % rgb, "block_label": "other",
+        })
+        return {"mode": "label", "levels": levels}
+
     return {
+        "mode": "score",
         "levels": [
             {"threshold": 0.90, "color": "#22c55e", "label": "高置信度 (≥90%)"},
             {"threshold": 0.75, "color": "#3b82f6", "label": "中高 (75%-90%)"},
             {"threshold": 0.60, "color": "#eab308", "label": "中低 (60%-75%)"},
             {"threshold": 0.0, "color": "#ef4444", "label": "低置信度 (<60%, 需人工校对)"},
-        ]
+        ],
     }

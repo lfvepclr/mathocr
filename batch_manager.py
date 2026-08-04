@@ -19,9 +19,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import engine_registry
 import image_annotator
 import ocr_engine
 import pdf_renderer
+import settings_store
 from event_bus import event_bus
 
 logger = logging.getLogger(__name__)
@@ -59,7 +61,13 @@ def _init_db(conn: sqlite3.Connection):
             file_count      INTEGER DEFAULT 0,
             alias           TEXT,
             completed_at    TIMESTAMP,
-            processing_time REAL DEFAULT 0
+            processing_time REAL DEFAULT 0,
+            engine          TEXT DEFAULT 'local',
+            api_calls         INTEGER DEFAULT 0,
+            prompt_tokens     INTEGER DEFAULT 0,
+            completion_tokens INTEGER DEFAULT 0,
+            billed_pages      INTEGER DEFAULT 0,
+            cost              REAL DEFAULT 0
         )
     """)
     conn.execute("""
@@ -95,6 +103,10 @@ def _init_db(conn: sqlite3.Connection):
             annotated_image_path  TEXT,
             images_dir            TEXT,
             processing_time       REAL DEFAULT 0,
+            api_calls             INTEGER DEFAULT 0,
+            prompt_tokens         INTEGER DEFAULT 0,
+            completion_tokens     INTEGER DEFAULT 0,
+            cost                  REAL DEFAULT 0,
             created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(batch_id, file_id, page_id)
         )
@@ -116,6 +128,12 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "alias": "TEXT",
         "completed_at": "TIMESTAMP",
         "processing_time": "REAL DEFAULT 0",
+        "engine": "TEXT DEFAULT 'local'",
+        "api_calls": "INTEGER DEFAULT 0",
+        "prompt_tokens": "INTEGER DEFAULT 0",
+        "completion_tokens": "INTEGER DEFAULT 0",
+        "billed_pages": "INTEGER DEFAULT 0",
+        "cost": "REAL DEFAULT 0",
     },
     "files": {
         "batch_id": "TEXT NOT NULL DEFAULT ''",
@@ -144,6 +162,10 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
         "annotated_image_path": "TEXT",
         "images_dir": "TEXT",
         "processing_time": "REAL DEFAULT 0",
+        "api_calls": "INTEGER DEFAULT 0",
+        "prompt_tokens": "INTEGER DEFAULT 0",
+        "completion_tokens": "INTEGER DEFAULT 0",
+        "cost": "REAL DEFAULT 0",
         "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     },
 }
@@ -222,7 +244,8 @@ def _natural_sort_key(name: str) -> list:
             for t in _NATURAL_SORT_RE.split(name)]
 
 
-def create_batch(uploaded_files: list[tuple[str, bytes]]) -> str:
+def create_batch(uploaded_files: list[tuple[str, bytes]],
+                 engine: str = "local") -> str:
     batch_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     uploads_dir = get_uploads_dir(batch_id)
     uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -247,8 +270,9 @@ def create_batch(uploaded_files: list[tuple[str, bytes]]) -> str:
     with _db_lock:
         db = _get_db()
         db.execute(
-            "INSERT INTO batches (batch_id, status, file_count) VALUES (?, ?, ?)",
-            [batch_id, "processing", len(file_records)],
+            "INSERT INTO batches (batch_id, status, file_count, engine) "
+            "VALUES (?, ?, ?, ?)",
+            [batch_id, "processing", len(file_records), engine],
         )
         for rec in file_records:
             db.execute(
@@ -259,7 +283,8 @@ def create_batch(uploaded_files: list[tuple[str, bytes]]) -> str:
             )
         db.commit()
 
-    logger.info("Created batch %s with %d files", batch_id, len(file_records))
+    logger.info("Created batch %s with %d files (engine=%s)",
+                batch_id, len(file_records), engine)
     return batch_id
 
 
@@ -318,22 +343,34 @@ def update_batch_alias(batch_id: str, alias: str):
         _get_db().commit()
 
 
+# Columns shared by get_batch() / list_batches() and the dicts they return
+_BATCH_COLUMNS = (
+    "batch_id", "created_at", "status", "file_count", "alias",
+    "completed_at", "processing_time", "engine", "api_calls",
+    "prompt_tokens", "completion_tokens", "billed_pages", "cost",
+)
+_BATCH_SELECT = ", ".join(_BATCH_COLUMNS)
+
+
+def _batch_row_to_dict(row) -> dict:
+    out = dict(zip(_BATCH_COLUMNS, row))
+    out["created_at"] = str(out["created_at"])
+    out["completed_at"] = (
+        str(out["completed_at"]) if out["completed_at"] else None
+    )
+    out["engine"] = out["engine"] or "local"
+    return out
+
+
 def get_batch(batch_id: str) -> dict | None:
     with _db_lock:
         row = _get_db().execute(
-            """SELECT batch_id, created_at, status, file_count, alias,
-                      completed_at, processing_time
-               FROM batches WHERE batch_id = ?""",
+            f"SELECT {_BATCH_SELECT} FROM batches WHERE batch_id = ?",
             [batch_id],
         ).fetchone()
     if not row:
         return None
-    return {
-        "batch_id": row[0], "created_at": str(row[1]), "status": row[2],
-        "file_count": row[3], "alias": row[4],
-        "completed_at": str(row[5]) if row[5] else None,
-        "processing_time": row[6],
-    }
+    return _batch_row_to_dict(row)
 
 
 def list_batches(limit: int = 50, offset: int = 0,
@@ -342,35 +379,30 @@ def list_batches(limit: int = 50, offset: int = 0,
         db = _get_db()
         if status:
             rows = db.execute(
-                """SELECT batch_id, created_at, status, file_count, alias,
-                          completed_at, processing_time
-                   FROM batches WHERE status = ?
-                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                f"""SELECT {_BATCH_SELECT} FROM batches WHERE status = ?
+                    ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                 [status, limit, offset],
             ).fetchall()
         else:
             rows = db.execute(
-                """SELECT batch_id, created_at, status, file_count, alias,
-                          completed_at, processing_time
-                   FROM batches ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                f"""SELECT {_BATCH_SELECT} FROM batches
+                    ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                 [limit, offset],
             ).fetchall()
-    return [{
-        "batch_id": r[0], "created_at": str(r[1]), "status": r[2],
-        "file_count": r[3], "alias": r[4],
-        "completed_at": str(r[5]) if r[5] else None,
-        "processing_time": r[6],
-    } for r in rows]
+    return [_batch_row_to_dict(r) for r in rows]
 
 
 def delete_batch(batch_id: str):
     import shutil
+
+    import settings_store
     with _db_lock:
         db = _get_db()
         db.execute("DELETE FROM pages WHERE batch_id = ?", [batch_id])
         db.execute("DELETE FROM files WHERE batch_id = ?", [batch_id])
         db.execute("DELETE FROM batches WHERE batch_id = ?", [batch_id])
         db.commit()
+    settings_store.delete_batch_usage(batch_id)
     batch_dir = get_batch_dir(batch_id)
     if batch_dir.exists():
         shutil.rmtree(batch_dir, ignore_errors=True)
@@ -440,15 +472,64 @@ def update_file_status(batch_id: str, file_id: str, status: str,
         db.commit()
 
 
-def get_avg_page_time(default: float = 60.0) -> float:
-    """Average per-page OCR time over historical pages (seconds)."""
+def get_avg_page_time(default: float = 60.0, engine: str | None = None) -> float:
+    """Average per-page OCR time over historical pages (seconds).
+
+    Filtering by engine matters a lot for the ETA shown in the UI: remote
+    engines are an order of magnitude faster/slower than local CPU inference.
+    """
     with _db_lock:
-        row = _get_db().execute(
+        db = _get_db()
+        if engine:
+            row = db.execute(
+                """SELECT AVG(p.processing_time) FROM pages p
+                   JOIN batches b ON b.batch_id = p.batch_id
+                   WHERE p.processing_time > 0
+                     AND COALESCE(b.engine, 'local') = ?""",
+                [engine],
+            ).fetchone()
+            if row and row[0]:
+                return float(row[0])
+        row = db.execute(
             "SELECT AVG(processing_time) FROM pages WHERE processing_time > 0"
         ).fetchone()
     if row and row[0]:
         return float(row[0])
     return default
+
+
+def accumulate_batch_usage(batch_id: str, *, calls: int = 0,
+                           prompt_tokens: int = 0, completion_tokens: int = 0,
+                           billed_pages: int = 0, cost: float = 0.0) -> dict:
+    """Add one accounting event to a batch's running totals; return them."""
+    with _db_lock:
+        db = _get_db()
+        db.execute(
+            """UPDATE batches SET
+                   api_calls         = COALESCE(api_calls, 0) + ?,
+                   prompt_tokens     = COALESCE(prompt_tokens, 0) + ?,
+                   completion_tokens = COALESCE(completion_tokens, 0) + ?,
+                   billed_pages      = COALESCE(billed_pages, 0) + ?,
+                   cost              = COALESCE(cost, 0) + ?
+               WHERE batch_id = ?""",
+            [calls, prompt_tokens, completion_tokens, billed_pages, cost,
+             batch_id],
+        )
+        db.commit()
+        row = db.execute(
+            """SELECT api_calls, prompt_tokens, completion_tokens,
+                      billed_pages, cost FROM batches WHERE batch_id = ?""",
+            [batch_id],
+        ).fetchone()
+    if not row:
+        return {}
+    return {
+        "api_calls": row[0] or 0,
+        "prompt_tokens": row[1] or 0,
+        "completion_tokens": row[2] or 0,
+        "billed_pages": row[3] or 0,
+        "cost": round(row[4] or 0, 6),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -520,13 +601,16 @@ def insert_page(batch_id: str, file_id: str, page_id: int, data: dict):
             """INSERT OR REPLACE INTO pages
                (batch_id, file_id, page_id, has_result, block_count, avg_score,
                 markdown_path, json_path, original_image_path,
-                annotated_image_path, images_dir, processing_time)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                annotated_image_path, images_dir, processing_time,
+                api_calls, prompt_tokens, completion_tokens, cost)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [batch_id, file_id, page_id, data.get("has_result", True),
              data.get("block_count", 0), data.get("avg_score", 0),
              data.get("markdown_path"), data.get("json_path"),
              data.get("original_image_path"), data.get("annotated_image_path"),
-             data.get("images_dir"), data.get("processing_time", 0)],
+             data.get("images_dir"), data.get("processing_time", 0),
+             data.get("api_calls", 0), data.get("prompt_tokens", 0),
+             data.get("completion_tokens", 0), data.get("cost", 0)],
         )
         _get_db().commit()
 
@@ -593,16 +677,21 @@ def process_batch_background(batch_id: str):
 
         # Files are processed SEQUENTIALLY: concurrent predict_iter calls on
         # the shared PaddleOCR-VL pipeline are not thread-safe and crash.
-        logger.info("Processing batch %s sequentially (%d/%d files pending)",
-                    batch_id, len(pending_files), len(files))
+        # (Remote engines parallelise internally, per page.)
+        engine = (get_batch(batch_id) or {}).get("engine") or "local"
+        logger.info(
+            "Processing batch %s sequentially with engine '%s' "
+            "(%d/%d files pending)",
+            batch_id, engine, len(pending_files), len(files),
+        )
 
         for file_info in pending_files:
             try:
-                _process_single_file(batch_id, file_info)
-            except Exception:
+                _process_single_file(batch_id, file_info, engine)
+            except Exception as exc:
                 logger.exception("File processing failed: %s", file_info["file_id"])
                 update_file_status(batch_id, file_info["file_id"], "error",
-                                   error_message="Processing exception")
+                                   error_message=str(exc)[:500])
 
         # Determine final batch status
         file_statuses = [f["status"] for f in get_files(batch_id)]
@@ -631,7 +720,7 @@ def process_batch_background(batch_id: str):
         })
 
 
-def _process_single_file(batch_id: str, file_info: dict):
+def _process_single_file(batch_id: str, file_info: dict, engine: str = "local"):
     file_start = time.time()
     file_id = file_info["file_id"]
     original_name = file_info["original_name"]
@@ -670,26 +759,90 @@ def _process_single_file(batch_id: str, file_info: dict):
     total_pages = len(original_images)
     update_file_status(batch_id, file_id, "processing", total_pages=total_pages)
 
+    # Now that the page count is known, publish a cost estimate for this file
+    estimate = engine_registry.estimate_cost(engine, total_pages)
+    event_bus.publish(batch_id, "cost_estimated", {
+        "file_id": file_id,
+        "original_name": original_name,
+        "engine": engine,
+        "pages": total_pages,
+        "estimated_cost": estimate.get("cost"),
+        "basis": estimate.get("basis"),
+        "note": estimate.get("note"),
+    })
+
+    # --- API accounting callback (remote engines only) ---
+    # Token-billed engines report per page, so their cost can be attributed
+    # to the page row; page-billed engines report once per document.
+    pending_page_usage: dict[int, dict] = {}
+
+    def on_usage(page_id: int | None = None, calls: int = 0,
+                 prompt_tokens: int = 0, completion_tokens: int = 0,
+                 billed_pages: int = 0):
+        cost = engine_registry.compute_cost(
+            engine,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            billed_pages=billed_pages,
+        )
+        settings_store.record_usage(
+            engine, batch_id=batch_id, file_id=file_id, page_id=page_id,
+            calls=calls, prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens, billed_pages=billed_pages,
+            cost=cost,
+        )
+        totals = accumulate_batch_usage(
+            batch_id, calls=calls, prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens, billed_pages=billed_pages,
+            cost=cost,
+        )
+        if page_id is not None:
+            pending_page_usage[page_id] = {
+                "api_calls": calls,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost": cost,
+            }
+        event_bus.publish(batch_id, "usage_recorded", {
+            "engine": engine,
+            "file_id": file_id,
+            "page_id": page_id,
+            "calls": calls,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "billed_pages": billed_pages,
+            "cost": cost,
+            "batch_totals": totals,
+        })
+
     # Step 2+3: Stream OCR — persist each page as soon as it is ready,
     # publishing per-page progress events along the way.
-    avg_page_time = get_avg_page_time()
-    logger.info("Starting OCR for %s (%d pages) — this may take a while on first run",
-                original_name, total_pages)
+    avg_page_time = get_avg_page_time(engine=engine)
+    # Baidu parses the whole document server-side, so the per-page ETA is
+    # meaningless until the remote task returns.
+    stage = "远程任务解析中" if engine == engine_registry.BAIDU else None
+    logger.info("Starting OCR for %s (%d pages, engine=%s) — this may take a while",
+                original_name, total_pages, engine)
     event_bus.publish(batch_id, "page_started", {
         "file_id": file_id, "page_id": 0,
         "total_pages": total_pages, "avg_page_time": round(avg_page_time, 1),
+        "engine": engine, "stage": stage,
     })
 
     completed_pages = 0
     # Inference happens lazily inside the generator's next(); measure it here
     # so per-page timing reflects inference + persistence, not just persistence.
     infer_start = time.time()
-    for page_idx, page_result in ocr_engine.process_document_iter(str(file_path)):
+    for page_idx, page_result in ocr_engine.process_document_iter(
+        str(file_path), engine=engine, page_images=original_images,
+        on_usage=on_usage,
+    ):
         infer_time = time.time() - infer_start
         _process_single_page(batch_id, file_id, page_idx, page_result,
                              original_images, file_results_dir,
                              total_pages, completed_pages,
-                             infer_time=infer_time)
+                             infer_time=infer_time,
+                             usage=pending_page_usage.pop(page_idx, None))
         completed_pages += 1
         logger.info("Page %d/%d completed for %s (%.1fs)",
                     completed_pages, total_pages, original_name, infer_time)
@@ -699,6 +852,7 @@ def _process_single_file(batch_id: str, file_info: dict):
             event_bus.publish(batch_id, "page_started", {
                 "file_id": file_id, "page_id": page_idx + 1,
                 "total_pages": total_pages, "avg_page_time": round(avg_page_time, 1),
+                "engine": engine, "stage": None,
             })
 
     if completed_pages != total_pages:
@@ -730,6 +884,7 @@ def _process_single_page(
     total_pages: int = 0,
     prior_completed: int = 0,
     infer_time: float = 0.0,
+    usage: dict | None = None,
 ):
     page_start = time.time()
     page_id = page_idx
@@ -737,6 +892,14 @@ def _process_single_page(
     images_dir.mkdir(exist_ok=True)
 
     # --- Save JSON ---
+    # Normalize table-embedded image refs ("imgs/x.jpg" -> "x.jpg") so the
+    # viewer's API-prefix rewrite hits the flat files in page_N_images/.
+    for block in (page_result["json_data"].get("res", {})
+                  .get("parsing_res_list") or []):
+        content = block.get("block_content")
+        if content and 'src="imgs/' in content:
+            block["block_content"] = re.sub(
+                r'src="imgs/([^"]+)"', r'src="\1"', content)
     json_path = file_results_dir / f"page_{page_id}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(page_result["json_data"], f, ensure_ascii=False, indent=2)
@@ -784,6 +947,7 @@ def _process_single_page(
     page_time = infer_time + (time.time() - page_start)
 
     # --- Insert page record ---
+    usage = usage or {}
     insert_page(batch_id, file_id, page_id, {
         "has_result": True,
         "block_count": block_count,
@@ -794,6 +958,10 @@ def _process_single_page(
         "annotated_image_path": str(annotated_path),
         "images_dir": str(images_dir),
         "processing_time": round(page_time, 2),
+        "api_calls": usage.get("api_calls", 0),
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "cost": usage.get("cost", 0),
     })
 
     # --- Publish SSE event ---

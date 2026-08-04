@@ -19,6 +19,7 @@ const App = {
     Sidebar.init();
     Uploader.init();
     Viewer.init();
+    Settings.init();
 
     // Bind global events
     document.getElementById('new-parsing-btn').addEventListener('click', () => {
@@ -45,8 +46,9 @@ const App = {
     }
     toggleBtn.addEventListener('click', () => App.toggleSidebar());
 
-    // View mode toggle
-    document.querySelectorAll('.btn-toggle').forEach(btn => {
+    // View mode toggle (split/original/markdown only — the flow/layout
+    // result toggle has data-rmode and is owned by Viewer.setViewMode)
+    document.querySelectorAll('.btn-toggle[data-mode]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const mode = e.target.dataset.mode;
         App.setViewMode(mode);
@@ -81,11 +83,13 @@ const App = {
     const es = new EventSource('/api/events');
     App.globalEventSource = es;
     ['batch_queued', 'batch_started', 'file_started', 'page_started',
-     'page_completed', 'file_completed', 'batch_completed'].forEach(type => {
+     'page_completed', 'file_completed', 'batch_completed',
+     'cost_estimated', 'usage_recorded'].forEach(type => {
       es.addEventListener(type, (e) => {
         const data = JSON.parse(e.data);
         Sidebar.handleGlobalEvent(type, data);
         QueuePanel.handleEvent(type, data);
+        Settings.onGlobalEvent(type, data);
       });
     });
     // EventSource auto-reconnects; poll the queue panel while disconnected
@@ -98,6 +102,8 @@ const App = {
     document.getElementById('upload-view').classList.add('active');
     document.getElementById('results-view').classList.remove('active');
     document.getElementById('confidence-legend').classList.remove('visible');
+    document.getElementById('label-legend').classList.remove('visible');
+    Settings.refreshUsage();
     // Deselect batch in sidebar
     document.querySelectorAll('.batch-item').forEach(el => el.classList.remove('active'));
   },
@@ -105,7 +111,6 @@ const App = {
   showResultsView() {
     document.getElementById('upload-view').classList.remove('active');
     document.getElementById('results-view').classList.add('active');
-    document.getElementById('confidence-legend').classList.add('visible');
   },
 
   // ---- Navigation ----
@@ -174,13 +179,17 @@ const App = {
 
   // ---- View mode ----
   setViewMode(mode) {
+    if (!mode) return;
     App.state.viewMode = mode;
-    document.querySelectorAll('.btn-toggle').forEach(btn => {
+    document.querySelectorAll('.btn-toggle[data-mode]').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === mode);
     });
 
     const leftPanel = document.getElementById('left-panel');
     const rightPanel = document.getElementById('right-panel');
+    // The split divider only makes sense when both panels are visible
+    const divider = document.getElementById('split-divider');
+    if (divider) divider.style.display = mode === 'split' ? '' : 'none';
 
     switch (mode) {
       case 'split':
@@ -208,8 +217,9 @@ const App = {
 
   // ---- Routing ----
   handleRoute() {
-    const hash = window.location.hash.slice(1); // remove #
-    if (!hash || hash === '/upload') {
+    // Tolerate both #batch/... and #/batch/... deep links
+    const hash = window.location.hash.slice(1).replace(/^\//, ''); // remove #
+    if (!hash || hash === 'upload') {
       App.showUploadView();
       return;
     }

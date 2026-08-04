@@ -29,7 +29,9 @@ from pathlib import Path
 from robyn import Headers, Request, Response, Robyn, StreamingResponse, jsonify, serve_file, serve_html
 
 import batch_manager
+import engine_registry
 import exporter
+import settings_store
 from job_queue import job_queue
 from event_bus import event_bus
 from image_annotator import generate_legend
@@ -94,21 +96,39 @@ def serve_static(request: Request):
 # ===========================================================================
 @app.post("/api/upload")
 async def upload(request: Request):
-    """Receive multi-file upload, create batch, start background OCR."""
+    """Receive multi-file upload, create batch, start background OCR.
+
+    The OCR engine is passed as a query parameter (`?engine=`) rather than a
+    form field: Robyn's multipart parsing exposes files only, so non-file
+    fields are not reliably available here.
+    """
     files = request.files
     if not files:
         return jsonify({"error": "No files uploaded"})
 
+    qp = request.query_params
+    engine = (qp.get("engine", None) if qp else None) or engine_registry.default_engine()
+    if engine not in engine_registry.ENGINES:
+        return jsonify({"error": f"未知的 OCR 引擎: {engine}"})
+    if not engine_registry.is_configured(engine):
+        name = engine_registry.ENGINES[engine]["name"]
+        return jsonify({"error": f"引擎「{name}」未配置 API Key，请先在设置中填写"})
+
     uploaded_files = [(name, content) for name, content in files.items()]
-    logger.info("Upload received: %d files", len(uploaded_files))
+    logger.info("Upload received: %d files (engine=%s)", len(uploaded_files), engine)
 
     # Create batch and save files
-    batch_id = batch_manager.create_batch(uploaded_files)
+    batch_id = batch_manager.create_batch(uploaded_files, engine=engine)
 
     # Enqueue for processing (single worker, sequential)
     job_queue.enqueue(batch_id)
 
-    return jsonify({"batch_id": batch_id, "status": "queued", "file_count": len(uploaded_files)})
+    return jsonify({
+        "batch_id": batch_id,
+        "status": "queued",
+        "file_count": len(uploaded_files),
+        "engine": engine,
+    })
 
 
 # ===========================================================================
@@ -208,6 +228,14 @@ def get_page(request: Request):
         if json_path.exists():
             json_data = json.loads(json_path.read_text(encoding="utf-8"))
 
+    # Which colouring the viewer should use: engines without confidence
+    # scores tag their result with has_score=false.
+    res = (json_data or {}).get("res") or {}
+    boxes = (res.get("layout_det_res") or {}).get("boxes") or []
+    has_score = res.get("has_score")
+    if has_score is None:
+        has_score = any("score" in b for b in boxes) if boxes else True
+
     return jsonify({
         "page_id": page["page_id"],
         "has_result": page["has_result"],
@@ -215,6 +243,8 @@ def get_page(request: Request):
         "avg_score": page["avg_score"],
         "markdown": md_content,
         "json": json_data,
+        "engine": res.get("engine", "local"),
+        "has_score": bool(has_score),
         "original_image_url": f"/api/image/{batch_id}/{file_id}/{page_id}?type=original",
         "annotated_image_url": f"/api/image/{batch_id}/{file_id}/{page_id}?type=annotated",
     })
@@ -265,6 +295,10 @@ def serve_extracted_image(request: Request):
         return Response(404, Headers({}), "Image not found")
 
     img_path = Path(page["images_dir"]) / img_name
+    if not img_path.is_file():
+        # Old local-engine batches reference table images as "imgs/x.jpg"
+        # while files are stored flat — retry with the bare file name.
+        img_path = Path(page["images_dir"]) / Path(img_name).name
     if img_path.exists() and img_path.is_file():
         content_type, _ = mimetypes.guess_type(str(img_path))
         headers = Headers({"Content-Type": content_type or "image/jpeg"})
@@ -299,6 +333,8 @@ def export(request: Request):
                 path = exporter.export_word(batch_id, file_id)
             else:
                 path = exporter.export_batch_word(batch_id)
+        elif fmt == "html":
+            path = exporter.export_layout_html(batch_id, file_id)
         else:
             return jsonify({"error": f"Unknown format: {fmt}"})
 
@@ -311,12 +347,126 @@ def export(request: Request):
 
 
 # ===========================================================================
+# API: Page richtext (copy-to-Word)
+# ===========================================================================
+@app.get("/api/page_richtext/:batch_id/:file_id/:page_id")
+def page_richtext(request: Request):
+    """Word-friendly HTML + plain text for a page or a single block.
+
+    The frontend writes the HTML to the clipboard as text/html so pasting
+    into Word preserves headings, tables and (base64-embedded) images.
+    """
+    batch_id = request.path_params["batch_id"]
+    file_id = request.path_params["file_id"]
+    try:
+        page_id = int(request.path_params["page_id"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "无效的页码"})
+    qp = request.query_params
+    block = qp.get("block", None) if qp else None
+    blocks_param = qp.get("blocks", None) if qp else None
+    try:
+        block_idx = int(block) if block not in (None, "") else None
+    except ValueError:
+        return jsonify({"error": "无效的块索引"})
+    # Multi-block selection (lasso copy) takes precedence over ?block=
+    block_idxs = None
+    if blocks_param not in (None, ""):
+        try:
+            block_idxs = [int(x) for x in blocks_param.split(",") if x.strip()]
+        except ValueError:
+            return jsonify({"error": "无效的块索引"})
+        if not block_idxs:
+            return jsonify({"error": "无效的块索引"})
+    try:
+        return jsonify(exporter.page_to_richtext(
+            batch_id, file_id, page_id, block_idx, block_idxs))
+    except ValueError as e:
+        return jsonify({"error": str(e)})
+    except Exception:
+        logger.exception("Page richtext failed")
+        return jsonify({"error": "生成富文本失败"})
+
+
+# ===========================================================================
 # API: Legend
 # ===========================================================================
 @app.get("/api/legend")
-def get_legend(_request: Request):
-    """Return confidence color legend data."""
-    return jsonify(generate_legend())
+def get_legend(request: Request):
+    """Return the color legend: confidence bands, or block types."""
+    qp = request.query_params
+    mode = (qp.get("mode", "score") if qp else "score") or "score"
+    return jsonify(generate_legend(mode))
+
+
+# ===========================================================================
+# API: Engines, settings and usage
+# ===========================================================================
+@app.get("/api/engines")
+def list_engines(_request: Request):
+    """Available OCR engines with configuration status and pricing."""
+    return jsonify({
+        "engines": engine_registry.list_engines(),
+        "default": engine_registry.default_engine(),
+    })
+
+
+@app.get("/api/settings")
+def get_settings(_request: Request):
+    """Current settings; API keys are masked."""
+    return jsonify(engine_registry.settings_view())
+
+
+@app.post("/api/settings")
+def post_settings(request: Request):
+    """Persist settings. A blank secret means 'keep the current value'."""
+    try:
+        payload = request.json()
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid JSON"})
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Invalid payload"})
+    updated = engine_registry.apply_settings(payload)
+    return jsonify({
+        "updated": updated,
+        "settings": engine_registry.settings_view(),
+        "engines": engine_registry.list_engines(),
+    })
+
+
+@app.get("/api/usage")
+def get_usage(request: Request):
+    """API usage and cost totals, grouped by engine."""
+    qp = request.query_params
+    scope = (qp.get("scope", "all") if qp else "all") or "all"
+    if scope not in ("today", "month", "all"):
+        return jsonify({"error": f"Unknown scope: {scope}"})
+    data = settings_store.aggregate(scope)
+    names = {e: meta["name"] for e, meta in engine_registry.ENGINES.items()}
+    for row in data["engines"]:
+        row["name"] = names.get(row["engine"], row["engine"])
+    return jsonify(data)
+
+
+@app.get("/api/usage/batch/:batch_id")
+def get_batch_usage(request: Request):
+    """API usage and cost totals for a single batch."""
+    batch_id = request.path_params["batch_id"]
+    return jsonify(settings_store.aggregate_batch(batch_id))
+
+
+@app.get("/api/usage/estimate")
+def estimate_usage(request: Request):
+    """Pre-flight cost estimate for a given engine and page count."""
+    qp = request.query_params
+    engine = (qp.get("engine", None) if qp else None) or engine_registry.default_engine()
+    if engine not in engine_registry.ENGINES:
+        return jsonify({"error": f"未知的 OCR 引擎: {engine}"})
+    try:
+        pages = int(qp.get("pages", "1") if qp else "1")
+    except ValueError:
+        return jsonify({"error": "pages must be an integer"})
+    return jsonify(engine_registry.estimate_cost(engine, max(0, pages)))
 
 
 # ===========================================================================
